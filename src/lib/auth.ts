@@ -91,8 +91,13 @@ export function getSessionCookieName(): string {
 
 export function getSessionCookieOptions() {
   return {
-    httpOnly: true,
-    secure: process.env.NODE_ENV === 'production',
+    // NOTE: httpOnly is intentionally false here so the frontend JS can read
+    // the token from document.cookie and send it as an Authorization header.
+    // This is needed because the preview URL goes through a Caddy proxy that
+    // may not forward cookies correctly in all browsers. The frontend sends
+    // the token as a Bearer header on every API call as a fallback.
+    httpOnly: false,
+    secure: false,
     sameSite: 'lax' as const,
     path: '/',
     maxAge: SESSION_TTL_MS / 1000, // seconds
@@ -146,10 +151,26 @@ export async function verifyCaptcha(id: string, userAnswer: string): Promise<boo
 }
 
 // ---- Get current user from request (helper for API routes) ----
+// Checks for the session token in TWO places:
+// 1. The labby_session cookie (standard browser flow)
+// 2. The Authorization: Bearer <token> header (fallback for preview URLs where
+//    the Caddy proxy might not forward cookies correctly)
 export async function getUserFromRequest(req: Request): Promise<{ id: string; name: string; email: string; role: string; department: string | null } | null> {
+  let token: string | undefined | null = null
+
+  // 1. Try the cookie first
   const cookie = req.headers.get('cookie') || ''
   const match = cookie.match(new RegExp(`${SESSION_COOKIE}=([^;]+)`))
-  const token = match?.[1]
+  token = match?.[1]
+
+  // 2. Fall back to the Authorization header
+  if (!token) {
+    const authHeader = req.headers.get('authorization') || ''
+    if (authHeader.startsWith('Bearer ')) {
+      token = authHeader.slice(7)
+    }
+  }
+
   const session = await verifySessionToken(token)
   if (!session) return null
   const user = await db.user.findUnique({ where: { id: session.userId } })

@@ -139,15 +139,37 @@ function timeToMinutesLocal(t: string): number {
   return h * 60 + m
 }
 
-// Auth-aware fetch wrapper: if any API call returns 401, dispatch a global event
-// that logs the user out and shows the login screen.
-// Skip the event for /api/auth/* endpoints — those handle their own 401s.
+// Read the session token from the cookie (cookie is not httpOnly so JS can read it)
+function getSessionToken(): string | null {
+  if (typeof document === 'undefined') return null
+  const match = document.cookie.match(/labby_session=([^;]+)/)
+  return match?.[1] || null
+}
+
+// Auth-aware fetch wrapper: sends the session token as a Bearer header on every
+// request as a fallback to cookies (needed for preview URLs where the Caddy proxy
+// might not forward cookies correctly). On 401, dispatches a global logout event.
 async function apiFetch(url: string, options?: RequestInit): Promise<Response> {
-  const res = await fetch(url, options)
+  const token = getSessionToken()
+  const headers = new Headers(options?.headers)
+  if (token) {
+    headers.set('Authorization', `Bearer ${token}`)
+  }
+  const res = await fetch(url, { ...options, headers })
   if (res.status === 401 && !url.startsWith('/api/auth/')) {
     window.dispatchEvent(new Event('labby-unauthorized'))
   }
   return res
+}
+
+// Auth fetch for /api/auth/* endpoints — also sends Bearer header
+async function authFetch(url: string, options?: RequestInit): Promise<Response> {
+  const token = getSessionToken()
+  const headers = new Headers(options?.headers)
+  if (token) {
+    headers.set('Authorization', `Bearer ${token}`)
+  }
+  return fetch(url, { ...options, headers })
 }
 
 // Helper: check if an error is an auth error (401) — these are handled globally
@@ -216,7 +238,7 @@ function LoginForm({ onLogin, toast }: { onLogin: (u: User) => void; toast: any 
     }
     setLoading(true)
     try {
-      const res = await fetch('/api/auth/login', {
+      const res = await authFetch('/api/auth/login', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ email: email.trim(), password }),
@@ -225,7 +247,7 @@ function LoginForm({ onLogin, toast }: { onLogin: (u: User) => void; toast: any 
       if (!res.ok) throw new Error(data.error || 'Login failed')
       // Verify the session cookie was actually set by calling /api/auth/me
       // This ensures the cookie is valid before we transition to the app.
-      const meRes = await fetch('/api/auth/me')
+      const meRes = await authFetch('/api/auth/me')
       if (meRes.ok) {
         const meData = await meRes.json()
         saveUser(meData.user)
@@ -297,7 +319,7 @@ function RegisterForm({ onLogin, toast }: { onLogin: (u: User) => void; toast: a
   const loadCaptcha = useCallback(async () => {
     setCaptchaLoading(true)
     try {
-      const res = await fetch('/api/auth/captcha')
+      const res = await authFetch('/api/auth/captcha')
       const data = await res.json()
       setCaptcha({ id: data.id, question: data.question })
       setCaptchaAnswer('')
@@ -332,7 +354,7 @@ function RegisterForm({ onLogin, toast }: { onLogin: (u: User) => void; toast: a
     }
     setLoading(true)
     try {
-      const res = await fetch('/api/auth/register', {
+      const res = await authFetch('/api/auth/register', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
@@ -1581,7 +1603,7 @@ export default function Home() {
     let cancelled = false
     const id = setTimeout(async () => {
       try {
-        const res = await fetch('/api/auth/me')
+        const res = await authFetch('/api/auth/me')
         if (cancelled) return
         if (res.ok) {
           const data = await res.json()
@@ -1643,7 +1665,7 @@ export default function Home() {
 
   const logout = async () => {
     try {
-      await fetch('/api/auth/logout', { method: 'POST' })
+      await authFetch('/api/auth/logout', { method: 'POST' })
     } catch {
       // ignore — still clear local state
     }
