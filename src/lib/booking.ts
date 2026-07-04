@@ -103,8 +103,9 @@ export const validateBooking = async (params: {
   startTime: string
   endTime: string
   userId: string
+  excludeBookingId?: string
 }): Promise<{ ok: boolean; error?: string; lab?: any }> => {
-  const { labId, date, startTime, endTime, userId } = params
+  const { labId, date, startTime, endTime, userId, excludeBookingId } = params
 
   if (!labId || !date || !startTime || !endTime) {
     return { ok: false, error: 'Missing required fields (labId, date, startTime, endTime).' }
@@ -130,12 +131,16 @@ export const validateBooking = async (params: {
     return { ok: false, error: 'Cannot book in the past.' }
   }
 
-  // Conflict check
+  // Conflict check — a lab cannot have two overlapping confirmed/pending bookings,
+  // regardless of who owns them. Self-overlap is also disallowed (a user cannot
+  // double-book the same lab at the same time). excludeBookingId is used when
+  // editing an existing booking so it doesn't conflict with itself.
   const existing = await getLabBookingsForDate(labId, date)
   for (const b of existing) {
-    if (b.userId === userId && b.status === 'CONFIRMED') continue // allow self-overlap? Actually no — disallow
+    if (excludeBookingId && b.id === excludeBookingId) continue
     if (overlaps(startTime, endTime, b.startTime, b.endTime)) {
-      return { ok: false, error: `Time conflicts with existing booking (${b.startTime}–${b.endTime}).` }
+      const owner = b.userId === userId ? 'your existing booking' : 'an existing booking'
+      return { ok: false, error: `Time conflicts with ${owner} (${b.startTime}–${b.endTime}).` }
     }
   }
 
