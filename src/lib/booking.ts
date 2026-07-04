@@ -202,14 +202,14 @@ export const validateBooking = async (params: {
 }
 
 // Role-based permissions
-// Staff and students have the same booking capabilities — they can chat, book labs,
-// check availability, and manage their own bookings.
-// Admin-only operations: creating/editing/deleting labs, viewing campus-wide stats,
-// viewing all bookings, and cancelling other users' bookings.
-export const canApproveBookings = (role: string) => role === 'ADMIN' // admin-only now
-export const canManageLabs = (role: string) => role === 'ADMIN'
-export const canViewAllBookings = (role: string) => role === 'ADMIN'
-export const canViewAdminStats = (role: string) => role === 'ADMIN'
+// The software is for faculty, staff, and admins only (no students).
+// Faculty, staff, and admins all have full access to every feature:
+// chat, book labs, check availability, manage their own bookings,
+// add/edit/delete labs, view all bookings campus-wide, and view admin stats.
+export const canApproveBookings = (_role: string) => true // all authenticated users
+export const canManageLabs = (_role: string) => true
+export const canViewAllBookings = (_role: string) => true
+export const canViewAdminStats = (_role: string) => true
 
 // Field length limits (defense against abuse)
 export const MAX_PURPOSE_LENGTH = 500

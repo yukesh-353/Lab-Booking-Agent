@@ -38,10 +38,9 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({ error: 'Name must be between 2 and 100 characters.' }, { status: 400 })
   }
 
-  // 5. Validate role
-  const allowedRoles = ['STUDENT', 'FACULTY', 'STAFF']
-  // Note: ADMIN role cannot be self-assigned during registration (security)
-  const finalRole = allowedRoles.includes(role) ? role : 'STUDENT'
+  // 5. Validate role — only Faculty and Staff can self-register (no Students, no Admins)
+  const allowedRoles = ['FACULTY', 'STAFF']
+  const finalRole = allowedRoles.includes(role) ? role : 'FACULTY'
 
   // 6. Verify captcha (REQUIRED for registration)
   if (!captchaId || captchaAnswer === undefined || captchaAnswer === null) {

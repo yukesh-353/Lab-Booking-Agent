@@ -27,7 +27,7 @@ interface User {
   id: string
   name: string
   email: string
-  role: 'STUDENT' | 'FACULTY' | 'STAFF' | 'ADMIN'
+  role: 'FACULTY' | 'STAFF' | 'ADMIN'
   department?: string | null
 }
 type LiveStatus = 'AVAILABLE' | 'BOOKED_NOW' | 'CLOSED' | 'MAINTENANCE' | 'OUTSIDE_HOURS'
@@ -175,7 +175,7 @@ function LoginScreen({ onLogin }: { onLogin: (u: User) => void }) {
           </CardHeader>
         </Card>
         <p className="text-xs text-center text-muted-foreground">
-          Demo accounts: alice/bob/carol/admin @campus.edu · password: <code className="font-mono">demo1234</code>
+          Demo accounts: bob/carol/admin @campus.edu · password: <code className="font-mono">demo1234</code>
         </p>
       </div>
     </div>
@@ -256,7 +256,7 @@ function RegisterForm({ onLogin, toast }: { onLogin: (u: User) => void; toast: a
   const [email, setEmail] = useState('')
   const [password, setPassword] = useState('')
   const [confirmPassword, setConfirmPassword] = useState('')
-  const [role, setRole] = useState<'STUDENT' | 'FACULTY' | 'STAFF'>('STUDENT')
+  const [role, setRole] = useState<'FACULTY' | 'STAFF'>('FACULTY')
   const [department, setDepartment] = useState('')
   const [captcha, setCaptcha] = useState<{ id: string; question: string } | null>(null)
   const [captchaAnswer, setCaptchaAnswer] = useState('')
@@ -379,7 +379,6 @@ function RegisterForm({ onLogin, toast }: { onLogin: (u: User) => void; toast: a
           <Select value={role} onValueChange={(v) => setRole(v as any)} disabled={loading}>
             <SelectTrigger><SelectValue /></SelectTrigger>
             <SelectContent>
-              <SelectItem value="STUDENT">Student</SelectItem>
               <SelectItem value="FACULTY">Faculty</SelectItem>
               <SelectItem value="STAFF">Staff</SelectItem>
             </SelectContent>
@@ -1028,19 +1027,8 @@ function LabsPanel({ user }: { user: User }) {
     }
   }
 
-  if (user.role !== 'ADMIN') {
-    return (
-      <div className="p-4 max-w-5xl mx-auto">
-        <Card>
-          <CardContent className="py-12 text-center">
-            <Shield className="w-10 h-10 mx-auto mb-3 text-muted-foreground/50" />
-            <p className="text-muted-foreground">Admin access required.</p>
-            <p className="text-sm text-muted-foreground mt-1">Only ADMIN can add, edit, or delete labs.</p>
-          </CardContent>
-        </Card>
-      </div>
-    )
-  }
+  // All authenticated users (faculty, staff, admin) can manage labs.
+  // No role gate needed — the tab is visible to everyone.
 
   const statusBadge = (s: string) => {
     const cls: Record<string, string> = {
@@ -1411,19 +1399,8 @@ function AdminPanel({ user }: { user: User }) {
     loadAllBookings()
   }, [loadAllBookings])
 
-  if (user.role !== 'ADMIN') {
-    return (
-      <div className="p-4 max-w-5xl mx-auto">
-        <Card>
-          <CardContent className="py-12 text-center">
-            <Shield className="w-10 h-10 mx-auto mb-3 text-muted-foreground/50" />
-            <p className="text-muted-foreground">Admin access required.</p>
-            <p className="text-sm text-muted-foreground mt-1">Only ADMIN can view campus-wide stats.</p>
-          </CardContent>
-        </Card>
-      </div>
-    )
-  }
+  // All authenticated users (faculty, staff, admin) can view admin stats.
+  // No role gate needed — the tab is visible to everyone.
 
   const statusBadge = (status: string) => {
     const cls: Record<string, string> = {
@@ -1641,17 +1618,16 @@ export default function Home() {
   }
 
   const roleBadge = {
-    STUDENT: 'bg-blue-100 text-blue-700 dark:bg-blue-950 dark:text-blue-300',
     FACULTY: 'bg-purple-100 text-purple-700 dark:bg-purple-950 dark:text-purple-300',
     STAFF: 'bg-amber-100 text-amber-700 dark:bg-amber-950 dark:text-amber-300',
     ADMIN: 'bg-emerald-100 text-emerald-700 dark:bg-emerald-950 dark:text-emerald-300',
-  }[user.role]
+  }[user.role as 'FACULTY' | 'STAFF' | 'ADMIN'] || 'bg-slate-100 text-slate-700'
 
-  // Labs management (add/edit/delete labs) and Admin panel (campus-wide stats)
-  // are ADMIN-ONLY. Students, faculty, and staff all have the same booking
-  // capabilities: chat, book, view availability, manage own bookings.
-  const canSeeAdmin = user.role === 'ADMIN'
-  const canSeeLabs = user.role === 'ADMIN'
+  // The software is for faculty, staff, and admins only (no students).
+  // All roles have full access to every feature: chat, book, availability,
+  // bookings, lab management (Labs tab), and campus-wide stats (Admin tab).
+  const canSeeAdmin = true
+  const canSeeLabs = true
 
   return (
     <div className="min-h-screen flex flex-col bg-background">

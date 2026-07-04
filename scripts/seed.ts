@@ -22,9 +22,7 @@ async function main() {
   const demoPasswordHash = await hashPassword('demo1234')
 
   // Users — now with passwordHash so they can log in via /api/auth/login
-  const alice = await db.user.create({
-    data: { name: 'Alice Chen', email: 'alice@campus.edu', role: 'STUDENT', department: 'Computer Science', passwordHash: demoPasswordHash },
-  })
+  // No student accounts — the software is for faculty, staff, and admins only.
   const bob = await db.user.create({
     data: { name: 'Bob Patel', email: 'bob@campus.edu', role: 'FACULTY', department: 'Computer Science', passwordHash: demoPasswordHash },
   })
@@ -90,14 +88,13 @@ async function main() {
     data: [
       { userId: bob.id, labId: labA.id, date: addDays(0), startTime: '10:00', endTime: '12:00', purpose: 'CS101 lecture session', status: 'CONFIRMED' },
       { userId: carol.id, labId: labB.id, date: addDays(1), startTime: '14:00', endTime: '16:00', purpose: 'ML workshop', status: 'CONFIRMED' },
-      { userId: alice.id, labId: labC.id, date: addDays(2), startTime: '15:00', endTime: '17:00', purpose: '3D printing project work', status: 'CONFIRMED' },
-      { userId: alice.id, labId: labA.id, date: addDays(-3), startTime: '09:00', endTime: '11:00', purpose: 'Assignment work', status: 'CANCELLED' },
+      { userId: bob.id, labId: labC.id, date: addDays(2), startTime: '15:00', endTime: '17:00', purpose: '3D printing project work', status: 'CONFIRMED' },
+      { userId: bob.id, labId: labA.id, date: addDays(-3), startTime: '09:00', endTime: '11:00', purpose: 'Assignment work', status: 'CANCELLED' },
     ],
   })
 
   console.log('Seed complete.')
   console.log('Demo users (all use password: demo1234):')
-  console.log('  Student: alice@campus.edu')
   console.log('  Faculty: bob@campus.edu')
   console.log('  Staff:   carol@campus.edu')
   console.log('  Admin:   admin@campus.edu')
