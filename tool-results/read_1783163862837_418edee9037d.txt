@@ -1,0 +1,923 @@
+     1→'use client'
+     2→
+     3→import { useState, useEffect, useRef, useCallback } from 'react'
+     4→import { Button } from '@/components/ui/button'
+     5→import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card'
+     6→import { Input } from '@/components/ui/input'
+     7→import { Label } from '@/components/ui/label'
+     8→import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs'
+     9→import { Badge } from '@/components/ui/badge'
+    10→import { ScrollArea } from '@/components/ui/scroll-area'
+    11→import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select'
+    12→import {
+    13→  Bot, Send, Calendar as CalendarIcon, LayoutDashboard, Shield, LogOut, Loader2, User,
+    14→  Clock, MapPin, Users, Monitor, CheckCircle2, XCircle, CalendarDays, Sparkles, History,
+    15→} from 'lucide-react'
+    16→import { useToast } from '@/hooks/use-toast'
+    17→import { format } from 'date-fns'
+    18→import { ThemeToggle } from '@/components/theme-toggle'
+    19→
+    20→// ---------- Types ----------
+    21→interface User {
+    22→  id: string
+    23→  name: string
+    24→  email: string
+    25→  role: 'STUDENT' | 'FACULTY' | 'STAFF' | 'ADMIN'
+    26→  department?: string | null
+    27→}
+    28→interface Lab {
+    29→  id: string
+    30→  name: string
+    31→  location: string
+    32→  capacity: number
+    33→  description?: string | null
+    34→  openTime: string
+    35→  closeTime: string
+    36→  status: 'OPEN' | 'CLOSED' | 'MAINTENANCE'
+    37→  software?: string | null
+    38→}
+    39→interface Slot {
+    40→  start: string
+    41→  end: string
+    42→  booked: boolean
+    43→  bookingId?: string
+    44→  bookerName?: string
+    45→  purpose?: string
+    46→}
+    47→interface Booking {
+    48→  id: string
+    49→  date: string
+    50→  startTime: string
+    51→  endTime: string
+    52→  purpose?: string | null
+    53→  status: 'PENDING' | 'CONFIRMED' | 'CANCELLED' | 'REJECTED'
+    54→  lab: Lab
+    55→  user?: User
+    56→  createdAt?: string
+    57→}
+    58→interface ChatMessage {
+    59→  role: 'user' | 'assistant'
+    60→  content: string
+    61→  ts: number
+    62→}
+    63→
+    64→// ---------- Local session storage ----------
+    65→const USER_KEY = 'labby_user'
+    66→
+    67→function loadUser(): User | null {
+    68→  try {
+    69→    const raw = typeof window !== 'undefined' ? localStorage.getItem(USER_KEY) : null
+    70→    return raw ? (JSON.parse(raw) as User) : null
+    71→  } catch {
+    72→    return null
+    73→  }
+    74→}
+    75→function saveUser(u: User | null) {
+    76→  if (typeof window === 'undefined') return
+    77→  if (u) localStorage.setItem(USER_KEY, JSON.stringify(u))
+    78→  else localStorage.removeItem(USER_KEY)
+    79→}
+    80→
+    81→// ---------- Quick suggestions ----------
+    82→const QUICK_PROMPTS = [
+    83→  'List all available labs',
+    84→  'Is Lab A free tomorrow afternoon?',
+    85→  'Book Lab B tomorrow 2-4pm for ML project',
+    86→  'Show my bookings',
+    87→]
+    88→
+    89→// ---------- Login screen ----------
+    90→function LoginScreen({ onLogin }: { onLogin: (u: User) => void }) {
+    91→  const [mode, setMode] = useState<'demo' | 'custom'>('demo')
+    92→  const [name, setName] = useState('')
+    93→  const [email, setEmail] = useState('')
+    94→  const [role, setRole] = useState<'STUDENT' | 'FACULTY' | 'STAFF' | 'ADMIN'>('STUDENT')
+    95→  const [department, setDepartment] = useState('')
+    96→  const [loading, setLoading] = useState(false)
+    97→  const { toast } = useToast()
+    98→
+    99→  const demoUsers = [
+   100→    { email: 'alice@campus.edu', label: 'Alice Chen · Student · Computer Science' },
+   101→    { email: 'bob@campus.edu', label: 'Bob Patel · Faculty · Computer Science' },
+   102→    { email: 'carol@campus.edu', label: 'Carol Reyes · Staff · IT Services' },
+   103→    { email: 'admin@campus.edu', label: 'Admin Wang · Admin · IT Services' },
+   104→  ]
+   105→
+   106→  const loginDemo = async (email: string) => {
+   107→    setLoading(true)
+   108→    try {
+   109→      const res = await fetch(`/api/session?email=${encodeURIComponent(email)}`)
+   110→      const data = await res.json()
+   111→      if (!res.ok) throw new Error(data.error || 'Login failed')
+   112→      saveUser(data.user)
+   113→      onLogin(data.user)
+   114→    } catch (e: any) {
+   115→      toast({ title: 'Login failed', description: e.message, variant: 'destructive' })
+   116→    } finally {
+   117→      setLoading(false)
+   118→    }
+   119→  }
+   120→
+   121→  const loginCustom = async () => {
+   122→    if (!name.trim() || !email.trim()) {
+   123→      toast({ title: 'Name and email are required', variant: 'destructive' })
+   124→      return
+   125→    }
+   126→    setLoading(true)
+   127→    try {
+   128→      const res = await fetch('/api/session', {
+   129→        method: 'POST',
+   130→        headers: { 'Content-Type': 'application/json' },
+   131→        body: JSON.stringify({ email: email.trim(), name: name.trim(), role, department: department.trim() || undefined }),
+   132→      })
+   133→      const data = await res.json()
+   134→      if (!res.ok) throw new Error(data.error || 'Login failed')
+   135→      saveUser(data.user)
+   136→      onLogin(data.user)
+   137→    } catch (e: any) {
+   138→      toast({ title: 'Login failed', description: e.message, variant: 'destructive' })
+   139→    } finally {
+   140→      setLoading(false)
+   141→    }
+   142→  }
+   143→
+   144→  return (
+   145→    <div className="relative min-h-screen flex flex-col items-center justify-center bg-gradient-to-br from-emerald-50 via-white to-teal-50 dark:from-slate-950 dark:via-slate-900 dark:to-emerald-950 p-4">
+   146→      <div className="absolute top-4 right-4">
+   147→        <ThemeToggle />
+   148→      </div>
+   149→      <div className="w-full max-w-md space-y-6">
+   150→        <div className="text-center space-y-2">
+   151→          <div className="inline-flex items-center justify-center w-16 h-16 rounded-2xl bg-gradient-to-br from-emerald-500 to-teal-600 text-white shadow-lg">
+   152→            <Bot className="w-8 h-8" />
+   153→          </div>
+   154→          <h1 className="text-3xl font-bold tracking-tight">Labby</h1>
+   155→          <p className="text-muted-foreground text-sm">Your AI agent for campus computer lab bookings</p>
+   156→        </div>
+   157→
+   158→        <Card>
+   159→          <CardHeader>
+   160→            <CardTitle className="text-lg">Sign in to continue</CardTitle>
+   161→            <CardDescription>Pick a demo account or create your own</CardDescription>
+   162→          </CardHeader>
+   163→          <CardContent className="space-y-4">
+   164→            <Tabs value={mode} onValueChange={(v) => setMode(v as 'demo' | 'custom')}>
+   165→              <TabsList className="grid w-full grid-cols-2">
+   166→                <TabsTrigger value="demo">Demo accounts</TabsTrigger>
+   167→                <TabsTrigger value="custom">Custom</TabsTrigger>
+   168→              </TabsList>
+   169→              <TabsContent value="demo" className="space-y-2 pt-4">
+   170→                {demoUsers.map((u) => (
+   171→                  <Button
+   172→                    key={u.email}
+   173→                    variant="outline"
+   174→                    className="w-full justify-start text-left h-auto py-3"
+   175→                    disabled={loading}
+   176→                    onClick={() => loginDemo(u.email)}
+   177→                  >
+   178→                    <User className="w-4 h-4 mr-3 shrink-0" />
+   179→                    <span className="text-sm">{u.label}</span>
+   180→                  </Button>
+   181→                ))}
+   182→              </TabsContent>
+   183→              <TabsContent value="custom" className="space-y-3 pt-4">
+   184→                <div className="space-y-1.5">
+   185→                  <Label htmlFor="name">Name</Label>
+   186→                  <Input id="name" value={name} onChange={(e) => setName(e.target.value)} placeholder="Jane Doe" />
+   187→                </div>
+   188→                <div className="space-y-1.5">
+   189→                  <Label htmlFor="email">Email</Label>
+   190→                  <Input id="email" type="email" value={email} onChange={(e) => setEmail(e.target.value)} placeholder="jane@campus.edu" />
+   191→                </div>
+   192→                <div className="space-y-1.5">
+   193→                  <Label htmlFor="role">Role</Label>
+   194→                  <Select value={role} onValueChange={(v) => setRole(v as any)}>
+   195→                    <SelectTrigger><SelectValue /></SelectTrigger>
+   196→                    <SelectContent>
+   197→                      <SelectItem value="STUDENT">Student</SelectItem>
+   198→                      <SelectItem value="FACULTY">Faculty</SelectItem>
+   199→                      <SelectItem value="STAFF">Staff</SelectItem>
+   200→                      <SelectItem value="ADMIN">Admin</SelectItem>
+   201→                    </SelectContent>
+   202→                  </Select>
+   203→                </div>
+   204→                <div className="space-y-1.5">
+   205→                  <Label htmlFor="dept">Department (optional)</Label>
+   206→                  <Input id="dept" value={department} onChange={(e) => setDepartment(e.target.value)} placeholder="Computer Science" />
+   207→                </div>
+   208→                <Button className="w-full" disabled={loading} onClick={loginCustom}>
+   209→                  {loading ? <Loader2 className="w-4 h-4 mr-2 animate-spin" /> : null}
+   210→                  Sign in
+   211→                </Button>
+   212→              </TabsContent>
+   213→            </Tabs>
+   214→          </CardContent>
+   215→        </Card>
+   216→        <p className="text-xs text-center text-muted-foreground">
+   217→          By signing in you agree to campus IT acceptable-use policy.
+   218→        </p>
+   219→      </div>
+   220→    </div>
+   221→  )
+   222→}
+   223→
+   224→// ---------- Chat Panel ----------
+   225→function ChatPanel({ user }: { user: User }) {
+   226→  const [messages, setMessages] = useState<ChatMessage[]>([
+   227→    {
+   228→      role: 'assistant',
+   229→      content: `Hi ${user.name.split(' ')[0]}! I'm Labby, your lab booking assistant. I can help you book a computer lab, check availability, view your bookings, or cancel one. What would you like to do?`,
+   230→      ts: Date.now(),
+   231→    },
+   232→  ])
+   233→  const [input, setInput] = useState('')
+   234→  const [loading, setLoading] = useState(false)
+   235→  const scrollRef = useRef<HTMLDivElement>(null)
+   236→  const { toast } = useToast()
+   237→
+   238→  useEffect(() => {
+   239→    scrollRef.current?.scrollTo({ top: scrollRef.current.scrollHeight, behavior: 'smooth' })
+   240→  }, [messages, loading])
+   241→
+   242→  const send = async (text: string) => {
+   243→    const trimmed = text.trim()
+   244→    if (!trimmed || loading) return
+   245→    const history = messages.map((m) => ({ role: m.role, content: m.content }))
+   246→    const next: ChatMessage[] = [...messages, { role: 'user', content: trimmed, ts: Date.now() }]
+   247→    setMessages(next)
+   248→    setInput('')
+   249→    setLoading(true)
+   250→    try {
+   251→      const res = await fetch('/api/chat', {
+   252→        method: 'POST',
+   253→        headers: { 'Content-Type': 'application/json' },
+   254→        body: JSON.stringify({ userId: user.id, message: trimmed, history }),
+   255→      })
+   256→      const data = await res.json()
+   257→      if (!res.ok) throw new Error(data.error || 'Chat failed')
+   258→      setMessages((prev) => [...prev, { role: 'assistant', content: data.reply, ts: Date.now() }])
+   259→    } catch (e: any) {
+   260→      toast({ title: 'Chat error', description: e.message, variant: 'destructive' })
+   261→      setMessages((prev) => [
+   262→        ...prev,
+   263→        { role: 'assistant', content: `Sorry, I hit an error: ${e.message}. Please try again.`, ts: Date.now() },
+   264→      ])
+   265→    } finally {
+   266→      setLoading(false)
+   267→    }
+   268→  }
+   269→
+   270→  return (
+   271→    <div className="flex flex-col h-full">
+   272→      <div className="flex-1 overflow-hidden">
+   273→        <ScrollArea className="h-full" ref={scrollRef as any}>
+   274→          <div className="space-y-4 p-4 max-w-3xl mx-auto">
+   275→            {messages.map((m, i) => (
+   276→              <MessageBubble key={i} message={m} userName={user.name} />
+   277→            ))}
+   278→            {loading && (
+   279→              <div className="flex gap-3 items-start">
+   280→                <div className="w-8 h-8 rounded-full bg-gradient-to-br from-emerald-500 to-teal-600 text-white flex items-center justify-center shrink-0">
+   281→                  <Bot className="w-4 h-4" />
+   282→                </div>
+   283→                <div className="bg-muted rounded-2xl rounded-tl-sm px-4 py-3 flex items-center gap-2">
+   284→                  <Loader2 className="w-4 h-4 animate-spin" />
+   285→                  <span className="text-sm text-muted-foreground">Thinking…</span>
+   286→                </div>
+   287→              </div>
+   288→            )}
+   289→          </div>
+   290→        </ScrollArea>
+   291→      </div>
+   292→
+   293→      <div className="border-t bg-background/80 backdrop-blur">
+   294→        <div className="max-w-3xl mx-auto p-4 space-y-3">
+   295→          <div className="flex flex-wrap gap-2">
+   296→            {QUICK_PROMPTS.map((p) => (
+   297→              <Button
+   298→                key={p}
+   299→                variant="outline"
+   300→                size="sm"
+   301→                className="text-xs h-8"
+   302→                disabled={loading}
+   303→                onClick={() => send(p)}
+   304→              >
+   305→                {p}
+   306→              </Button>
+   307→            ))}
+   308→          </div>
+   309→          <form
+   310→            onSubmit={(e) => {
+   311→              e.preventDefault()
+   312→              send(input)
+   313→            }}
+   314→            className="flex gap-2"
+   315→          >
+   316→            <Input
+   317→              value={input}
+   318→              onChange={(e) => setInput(e.target.value)}
+   319→              placeholder="Ask Labby anything — e.g. 'book Lab A tomorrow 2-4pm'"
+   320→              disabled={loading}
+   321→              className="flex-1"
+   322→            />
+   323→            <Button type="submit" disabled={loading || !input.trim()} size="icon" className="bg-emerald-600 hover:bg-emerald-700 text-white">
+   324→              {loading ? <Loader2 className="w-4 h-4 animate-spin" /> : <Send className="w-4 h-4" />}
+   325→            </Button>
+   326→          </form>
+   327→        </div>
+   328→      </div>
+   329→    </div>
+   330→  )
+   331→}
+   332→
+   333→function MessageBubble({ message, userName }: { message: ChatMessage; userName: string }) {
+   334→  const isUser = message.role === 'user'
+   335→  const initials = isUser ? userName.split(' ').map((s) => s[0]).slice(0, 2).join('') : 'L'
+   336→
+   337→  return (
+   338→    <div className={`flex gap-3 items-start ${isUser ? 'flex-row-reverse' : ''}`}>
+   339→      <div
+   340→        className={`w-8 h-8 rounded-full flex items-center justify-center shrink-0 text-white text-xs font-semibold ${
+   341→          isUser ? 'bg-slate-700' : 'bg-gradient-to-br from-emerald-500 to-teal-600'
+   342→        }`}
+   343→      >
+   344→        {isUser ? initials : <Bot className="w-4 h-4" />}
+   345→      </div>
+   346→      <div
+   347→        className={`max-w-[80%] px-4 py-3 rounded-2xl text-sm whitespace-pre-wrap ${
+   348→          isUser ? 'bg-slate-700 text-white rounded-tr-sm' : 'bg-muted rounded-tl-sm'
+   349→        }`}
+   350→      >
+   351→        <MarkdownLite content={message.content} />
+   352→      </div>
+   353→    </div>
+   354→  )
+   355→}
+   356→
+   357→// Lightweight markdown renderer — handles **bold**, `code`, and bullet lists
+   358→function MarkdownLite({ content }: { content: string }) {
+   359→  const lines = content.split('\n')
+   360→  return (
+   361→    <div className="space-y-1">
+   362→      {lines.map((line, i) => {
+   363→        if (line.trim().startsWith('• ') || line.trim().startsWith('- ')) {
+   364→          return (
+   365→            <div key={i} className="flex gap-2 pl-1">
+   366→              <span className="text-emerald-500 font-bold">•</span>
+   367→              <span>{renderInline(line.trim().slice(2))}</span>
+   368→            </div>
+   369→          )
+   370→        }
+   371→        return <div key={i}>{renderInline(line) || <br />}</div>
+   372→      })}
+   373→    </div>
+   374→  )
+   375→}
+   376→
+   377→function renderInline(text: string) {
+   378→  if (!text) return null
+   379→  const parts = text.split(/(\*\*[^*]+\*\*|`[^`]+`)/g)
+   380→  return parts.map((p, i) => {
+   381→    if (p.startsWith('**') && p.endsWith('**')) {
+   382→      return <strong key={i} className="font-semibold">{p.slice(2, -2)}</strong>
+   383→    }
+   384→    if (p.startsWith('`') && p.endsWith('`')) {
+   385→      return <code key={i} className="px-1.5 py-0.5 rounded bg-background/60 text-xs font-mono">{p.slice(1, -1)}</code>
+   386→    }
+   387→    return <span key={i}>{p}</span>
+   388→  })
+   389→}
+   390→
+   391→// ---------- Calendar / Availability Panel ----------
+   392→function CalendarPanel({ user }: { user: User }) {
+   393→  const [labs, setLabs] = useState<Lab[]>([])
+   394→  const [selectedLab, setSelectedLab] = useState<string>('')
+   395→  const [selectedDate, setSelectedDate] = useState<string>(new Date().toISOString().slice(0, 10))
+   396→  const [slots, setSlots] = useState<Slot[]>([])
+   397→  const [loading, setLoading] = useState(false)
+   398→  const { toast } = useToast()
+   399→
+   400→  useEffect(() => {
+   401→    fetch('/api/labs')
+   402→      .then((r) => r.json())
+   403→      .then((d) => {
+   404→        setLabs(d.labs || [])
+   405→        if (d.labs?.length) setSelectedLab(d.labs[0].id)
+   406→      })
+   407→  }, [])
+   408→
+   409→  const loadSchedule = useCallback(async () => {
+   410→    if (!selectedLab || !selectedDate) return
+   411→    setLoading(true)
+   412→    try {
+   413→      const res = await fetch(`/api/labs/${selectedLab}/availability?date=${selectedDate}`)
+   414→      const data = await res.json()
+   415→      if (!res.ok) throw new Error(data.error)
+   416→      setSlots(data.slots || [])
+   417→    } catch (e: any) {
+   418→      toast({ title: 'Failed to load schedule', description: e.message, variant: 'destructive' })
+   419→      setSlots([])
+   420→    } finally {
+   421→      setLoading(false)
+   422→    }
+   423→  }, [selectedLab, selectedDate, toast])
+   424→
+   425→  useEffect(() => {
+   426→    loadSchedule()
+   427→  }, [loadSchedule])
+   428→
+   429→  const selectedLabObj = labs.find((l) => l.id === selectedLab)
+   430→
+   431→  return (
+   432→    <div className="space-y-4 p-4 max-w-5xl mx-auto">
+   433→      <Card>
+   434→        <CardHeader>
+   435→          <CardTitle className="flex items-center gap-2"><CalendarDays className="w-5 h-5 text-emerald-600" /> Lab availability</CardTitle>
+   436→          <CardDescription>Check free and booked time slots for any lab on any date.</CardDescription>
+   437→        </CardHeader>
+   438→        <CardContent className="space-y-4">
+   439→          <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+   440→            <div className="space-y-1.5">
+   441→              <Label htmlFor="lab">Lab</Label>
+   442→              <Select value={selectedLab} onValueChange={setSelectedLab}>
+   443→                <SelectTrigger><SelectValue placeholder="Select a lab" /></SelectTrigger>
+   444→                <SelectContent>
+   445→                  {labs.map((l) => (
+   446→                    <SelectItem key={l.id} value={l.id}>
+   447→                      {l.name} {l.status !== 'OPEN' ? `(${l.status.toLowerCase()})` : ''}
+   448→                    </SelectItem>
+   449→                  ))}
+   450→                </SelectContent>
+   451→              </Select>
+   452→            </div>
+   453→            <div className="space-y-1.5">
+   454→              <Label htmlFor="date">Date</Label>
+   455→              <Input id="date" type="date" value={selectedDate} onChange={(e) => setSelectedDate(e.target.value)} />
+   456→            </div>
+   457→          </div>
+   458→
+   459→          {selectedLabObj && (
+   460→            <div className="rounded-lg border bg-muted/30 p-3 text-sm">
+   461→              <div className="font-semibold mb-1">{selectedLabObj.name}</div>
+   462→              <div className="grid grid-cols-2 sm:grid-cols-4 gap-2 text-muted-foreground text-xs">
+   463→                <span className="flex items-center gap-1"><MapPin className="w-3 h-3" /> {selectedLabObj.location}</span>
+   464→                <span className="flex items-center gap-1"><Users className="w-3 h-3" /> {selectedLabObj.capacity} seats</span>
+   465→                <span className="flex items-center gap-1"><Clock className="w-3 h-3" /> {selectedLabObj.openTime}–{selectedLabObj.closeTime}</span>
+   466→                <span className="flex items-center gap-1"><Monitor className="w-3 h-3" /> {selectedLabObj.software?.split(',')[0] || 'Standard suite'}</span>
+   467→              </div>
+   468→            </div>
+   469→          )}
+   470→
+   471→          <div>
+   472→            <div className="flex items-center justify-between mb-2">
+   473→              <h4 className="text-sm font-medium">
+   474→                Schedule for {format(new Date(selectedDate + 'T00:00:00'), 'EEEE, MMM d, yyyy')}
+   475→              </h4>
+   476→              {loading && <Loader2 className="w-4 h-4 animate-spin" />}
+   477→            </div>
+   478→            <div className="space-y-1.5">
+   479→              {!loading && slots.length === 0 && (
+   480→                <div className="text-sm text-muted-foreground py-8 text-center">Lab is closed or unavailable on this date.</div>
+   481→              )}
+   482→              {slots.map((s, i) => (
+   483→                <div
+   484→                  key={i}
+   485→                  className={`flex items-center justify-between rounded-md border px-3 py-2 text-sm ${
+   486→                    s.booked ? 'border-red-200 bg-red-50 dark:border-red-900/50 dark:bg-red-950/30' : 'border-emerald-200 bg-emerald-50 dark:border-emerald-900/50 dark:bg-emerald-950/30'
+   487→                  }`}
+   488→                >
+   489→                  <div className="flex items-center gap-2">
+   490→                    <Clock className="w-3.5 h-3.5 text-muted-foreground" />
+   491→                    <span className="font-mono">{s.start} – {s.end}</span>
+   492→                  </div>
+   493→                  {s.booked ? (
+   494→                    <Badge variant="destructive" className="text-xs">
+   495→                      Booked{s.bookerName ? ` · ${s.bookerName}` : ''}{s.purpose ? ` · ${s.purpose}` : ''}
+   496→                    </Badge>
+   497→                  ) : (
+   498→                    <Badge variant="default" className="text-xs bg-emerald-600 hover:bg-emerald-700">Free</Badge>
+   499→                  )}
+   500→                </div>
+   501→              ))}
+   502→            </div>
+   503→          </div>
+   504→
+   505→          <div className="rounded-md bg-emerald-50 dark:bg-emerald-950/30 border border-emerald-200 dark:border-emerald-900/50 p-3 text-sm text-muted-foreground">
+   506→            <Sparkles className="w-4 h-4 inline mr-1 text-emerald-600" />
+   507→            Tip: Switch to the Chat tab and just say "book {selectedLabObj?.name.split('—')[0].trim() || 'Lab A'} {selectedDate} 14:00-16:00" — Labby will handle it.
+   508→          </div>
+   509→        </CardContent>
+   510→      </Card>
+   511→    </div>
+   512→  )
+   513→}
+   514→
+   515→// ---------- My Bookings Panel ----------
+   516→function MyBookingsPanel({ user }: { user: User }) {
+   517→  const [bookings, setBookings] = useState<Booking[]>([])
+   518→  const [loading, setLoading] = useState(true)
+   519→  const { toast } = useToast()
+   520→
+   521→  const load = useCallback(async () => {
+   522→    setLoading(true)
+   523→    try {
+   524→      const res = await fetch(`/api/bookings?userId=${user.id}&scope=mine`)
+   525→      const data = await res.json()
+   526→      if (!res.ok) throw new Error(data.error)
+   527→      setBookings(data.bookings || [])
+   528→    } catch (e: any) {
+   529→      toast({ title: 'Failed to load bookings', description: e.message, variant: 'destructive' })
+   530→    } finally {
+   531→      setLoading(false)
+   532→    }
+   533→  }, [user.id, toast])
+   534→
+   535→  useEffect(() => {
+   536→    load()
+   537→  }, [load])
+   538→
+   539→  const cancel = async (id: string) => {
+   540→    try {
+   541→      const res = await fetch(`/api/bookings/${id}?userId=${user.id}`, { method: 'DELETE' })
+   542→      const data = await res.json()
+   543→      if (!res.ok) throw new Error(data.error)
+   544→      toast({ title: 'Booking cancelled', description: 'The slot is now free for others.' })
+   545→      load()
+   546→    } catch (e: any) {
+   547→      toast({ title: 'Failed to cancel', description: e.message, variant: 'destructive' })
+   548→    }
+   549→  }
+   550→
+   551→  const today = new Date().toISOString().slice(0, 10)
+   552→  const upcoming = bookings.filter((b) => b.date >= today)
+   553→  const past = bookings.filter((b) => b.date < today)
+   554→
+   555→  return (
+   556→    <div className="space-y-4 p-4 max-w-5xl mx-auto">
+   557→      <Card>
+   558→        <CardHeader>
+   559→          <CardTitle className="flex items-center gap-2"><LayoutDashboard className="w-5 h-5 text-emerald-600" /> My bookings</CardTitle>
+   560→          <CardDescription>Your upcoming and past lab reservations.</CardDescription>
+   561→        </CardHeader>
+   562→        <CardContent>
+   563→          {loading ? (
+   564→            <div className="flex items-center justify-center py-8"><Loader2 className="w-6 h-6 animate-spin text-muted-foreground" /></div>
+   565→          ) : bookings.length === 0 ? (
+   566→            <div className="text-center py-12 text-muted-foreground">
+   567→              <CalendarIcon className="w-10 h-10 mx-auto mb-3 opacity-50" />
+   568→              <p>You don't have any bookings yet.</p>
+   569→              <p className="text-sm mt-1">Use the Chat tab to ask Labby to book a lab for you.</p>
+   570→            </div>
+   571→          ) : (
+   572→            <div className="space-y-6">
+   573→              <div>
+   574→                <h3 className="text-sm font-semibold mb-2 text-muted-foreground uppercase tracking-wide">Upcoming ({upcoming.length})</h3>
+   575→                {upcoming.length === 0 ? (
+   576→                  <p className="text-sm text-muted-foreground">No upcoming bookings.</p>
+   577→                ) : (
+   578→                  <div className="space-y-2">
+   579→                    {upcoming.map((b) => (
+   580→                      <BookingCard key={b.id} booking={b} onCancel={() => cancel(b.id)} />
+   581→                    ))}
+   582→                  </div>
+   583→                )}
+   584→              </div>
+   585→              {past.length > 0 && (
+   586→                <div>
+   587→                  <h3 className="text-sm font-semibold mb-2 text-muted-foreground uppercase tracking-wide">Past ({past.length})</h3>
+   588→                  <div className="space-y-2 opacity-70">
+   589→                    {past.map((b) => (
+   590→                      <BookingCard key={b.id} booking={b} onCancel={() => cancel(b.id)} />
+   591→                    ))}
+   592→                  </div>
+   593→                </div>
+   594→              )}
+   595→            </div>
+   596→          )}
+   597→        </CardContent>
+   598→      </Card>
+   599→    </div>
+   600→  )
+   601→}
+   602→
+   603→function BookingCard({ booking, onCancel }: { booking: Booking; onCancel: () => void }) {
+   604→  const cancelled = booking.status === 'CANCELLED' || booking.status === 'REJECTED'
+   605→  return (
+   606→    <div className={`flex items-center justify-between rounded-lg border p-3 ${cancelled ? 'opacity-60' : ''}`}>
+   607→      <div className="flex-1 min-w-0">
+   608→        <div className="flex items-center gap-2 flex-wrap">
+   609→          <span className="font-medium text-sm truncate">{booking.lab.name}</span>
+   610→          <Badge variant={cancelled ? 'secondary' : 'default'} className={`text-xs ${cancelled ? '' : 'bg-emerald-600 hover:bg-emerald-700'}`}>
+   611→            {booking.status.toLowerCase()}
+   612→          </Badge>
+   613→        </div>
+   614→        <div className="text-xs text-muted-foreground mt-1 flex items-center gap-3 flex-wrap">
+   615→          <span className="flex items-center gap-1"><CalendarIcon className="w-3 h-3" /> {format(new Date(booking.date + 'T00:00:00'), 'EEE, MMM d, yyyy')}</span>
+   616→          <span className="flex items-center gap-1"><Clock className="w-3 h-3" /> {booking.startTime}–{booking.endTime}</span>
+   617→        </div>
+   618→        {booking.purpose && <div className="text-xs text-muted-foreground mt-0.5">Purpose: {booking.purpose}</div>}
+   619→        <div className="text-[10px] text-muted-foreground/70 mt-1 font-mono">ID: {booking.id}</div>
+   620→      </div>
+   621→      {!cancelled && (
+   622→        <Button variant="ghost" size="sm" className="text-red-600 hover:text-red-700 hover:bg-red-50" onClick={onCancel}>
+   623→          <XCircle className="w-4 h-4 mr-1" /> Cancel
+   624→        </Button>
+   625→      )}
+   626→    </div>
+   627→  )
+   628→}
+   629→
+   630→// ---------- Admin Panel ----------
+   631→function AdminPanel({ user }: { user: User }) {
+   632→  const [stats, setStats] = useState<any>(null)
+   633→  const [loading, setLoading] = useState(true)
+   634→  const [allBookings, setAllBookings] = useState<Booking[]>([])
+   635→  const [allBookingsDate, setAllBookingsDate] = useState(new Date().toISOString().slice(0, 10))
+   636→  const { toast } = useToast()
+   637→
+   638→  const loadStats = useCallback(async () => {
+   639→    setLoading(true)
+   640→    try {
+   641→      const res = await fetch(`/api/admin/stats?userId=${user.id}`)
+   642→      const data = await res.json()
+   643→      if (!res.ok) throw new Error(data.error)
+   644→      setStats(data)
+   645→    } catch (e: any) {
+   646→      toast({ title: 'Failed to load admin stats', description: e.message, variant: 'destructive' })
+   647→    } finally {
+   648→      setLoading(false)
+   649→    }
+   650→  }, [user.id, toast])
+   651→
+   652→  const loadAllBookings = useCallback(async () => {
+   653→    try {
+   654→      const res = await fetch(`/api/bookings?userId=${user.id}&scope=all&date=${allBookingsDate}`)
+   655→      const data = await res.json()
+   656→      if (!res.ok) throw new Error(data.error)
+   657→      setAllBookings(data.bookings || [])
+   658→    } catch (e: any) {
+   659→      toast({ title: 'Failed to load bookings', description: e.message, variant: 'destructive' })
+   660→    }
+   661→  }, [user.id, allBookingsDate, toast])
+   662→
+   663→  useEffect(() => {
+   664→    loadStats()
+   665→  }, [loadStats])
+   666→
+   667→  useEffect(() => {
+   668→    loadAllBookings()
+   669→  }, [loadAllBookings])
+   670→
+   671→  if (user.role !== 'ADMIN' && user.role !== 'STAFF') {
+   672→    return (
+   673→      <div className="p-4 max-w-5xl mx-auto">
+   674→        <Card>
+   675→          <CardContent className="py-12 text-center">
+   676→            <Shield className="w-10 h-10 mx-auto mb-3 text-muted-foreground/50" />
+   677→            <p className="text-muted-foreground">Admin access required.</p>
+   678→            <p className="text-sm text-muted-foreground mt-1">Only STAFF and ADMIN roles can view campus-wide stats.</p>
+   679→          </CardContent>
+   680→        </Card>
+   681→      </div>
+   682→    )
+   683→  }
+   684→
+   685→  const statusBadge = (status: string) => {
+   686→    const cls: Record<string, string> = {
+   687→      CONFIRMED: 'bg-emerald-600 hover:bg-emerald-700',
+   688→      PENDING: 'bg-amber-500 hover:bg-amber-600',
+   689→      CANCELLED: 'bg-slate-500 hover:bg-slate-600',
+   690→      REJECTED: 'bg-red-500 hover:bg-red-600',
+   691→    }
+   692→    return <Badge variant="default" className={`text-xs ${cls[status] || ''}`}>{status.toLowerCase()}</Badge>
+   693→  }
+   694→
+   695→  return (
+   696→    <div className="space-y-4 p-4 max-w-5xl mx-auto">
+   697→      {/* Stats grid */}
+   698→      <div className="grid grid-cols-2 lg:grid-cols-4 gap-3">
+   699→        <StatCard label="Total labs" value={stats?.totals?.labs ?? '—'} icon={<Monitor className="w-4 h-4" />} />
+   700→        <StatCard label="Total users" value={stats?.totals?.users ?? '—'} icon={<Users className="w-4 h-4" />} />
+   701→        <StatCard label="Bookings today" value={stats?.totals?.bookingsToday ?? '—'} icon={<CalendarIcon className="w-4 h-4" />} />
+   702→        <StatCard label="Bookings next 7 days" value={stats?.totals?.bookingsNext7Days ?? '—'} icon={<CalendarDays className="w-4 h-4" />} />
+   703→      </div>
+   704→
+   705→      {/* Lab usage */}
+   706→      <Card>
+   707→        <CardHeader>
+   708→          <CardTitle className="flex items-center gap-2"><History className="w-5 h-5 text-emerald-600" /> Lab usage (next 7 days)</CardTitle>
+   709→          <CardDescription>Bookings per lab over the coming week.</CardDescription>
+   710→        </CardHeader>
+   711→        <CardContent>
+   712→          {loading ? (
+   713→            <div className="flex items-center justify-center py-6"><Loader2 className="w-6 h-6 animate-spin text-muted-foreground" /></div>
+   714→          ) : (
+   715→            <div className="space-y-2">
+   716→              {stats?.labUsage?.map((lab: any, i: number) => {
+   717→                const max = Math.max(1, ...stats.labUsage.map((l: any) => l.bookingsNext7Days))
+   718→                const pct = (lab.bookingsNext7Days / max) * 100
+   719→                return (
+   720→                  <div key={i} className="space-y-1">
+   721→                    <div className="flex items-center justify-between text-sm">
+   722→                      <span className="truncate">{lab.lab}</span>
+   723→                      <span className="text-muted-foreground text-xs ml-2">{lab.bookingsNext7Days} bookings · {lab.status.toLowerCase()}</span>
+   724→                    </div>
+   725→                    <div className="h-2 rounded-full bg-muted overflow-hidden">
+   726→                      <div className="h-full bg-gradient-to-r from-emerald-500 to-teal-600" style={{ width: `${pct}%` }} />
+   727→                    </div>
+   728→                  </div>
+   729→                )
+   730→              })}
+   731→            </div>
+   732→          )}
+   733→        </CardContent>
+   734→      </Card>
+   735→
+   736→      {/* All bookings for a date */}
+   737→      <Card>
+   738→        <CardHeader>
+   739→          <CardTitle className="flex items-center gap-2"><CalendarDays className="w-5 h-5 text-emerald-600" /> All bookings on date</CardTitle>
+   740→          <CardDescription>Browse every reservation across campus.</CardDescription>
+   741→        </CardHeader>
+   742→        <CardContent className="space-y-3">
+   743→          <div className="flex gap-2 items-end">
+   744→            <div className="space-y-1.5">
+   745→              <Label htmlFor="all-date">Date</Label>
+   746→              <Input id="all-date" type="date" value={allBookingsDate} onChange={(e) => setAllBookingsDate(e.target.value)} className="w-auto" />
+   747→            </div>
+   748→          </div>
+   749→          {allBookings.length === 0 ? (
+   750→            <p className="text-sm text-muted-foreground py-6 text-center">No bookings on this date.</p>
+   751→          ) : (
+   752→            <div className="rounded-md border overflow-hidden">
+   753→              <div className="grid grid-cols-12 gap-2 bg-muted/50 px-3 py-2 text-xs font-medium text-muted-foreground">
+   754→                <div className="col-span-4">Lab</div>
+   755→                <div className="col-span-2">Time</div>
+   756→                <div className="col-span-3">Booked by</div>
+   757→                <div className="col-span-2">Purpose</div>
+   758→                <div className="col-span-1">Status</div>
+   759→              </div>
+   760→              <div className="divide-y max-h-96 overflow-y-auto">
+   761→                {allBookings.map((b) => (
+   762→                  <div key={b.id} className="grid grid-cols-12 gap-2 px-3 py-2 text-xs items-center">
+   763→                    <div className="col-span-4 truncate">{b.lab.name}</div>
+   764→                    <div className="col-span-2 font-mono">{b.startTime}–{b.endTime}</div>
+   765→                    <div className="col-span-3 truncate">{b.user?.name || '—'} <span className="text-muted-foreground">({(b.user?.role || '').toLowerCase()})</span></div>
+   766→                    <div className="col-span-2 truncate text-muted-foreground">{b.purpose || '—'}</div>
+   767→                    <div className="col-span-1">{statusBadge(b.status)}</div>
+   768→                  </div>
+   769→                ))}
+   770→              </div>
+   771→            </div>
+   772→          )}
+   773→        </CardContent>
+   774→      </Card>
+   775→
+   776→      {/* Recent activity */}
+   777→      {stats?.recentActivity?.length > 0 && (
+   778→        <Card>
+   779→          <CardHeader>
+   780→            <CardTitle className="flex items-center gap-2"><History className="w-5 h-5 text-emerald-600" /> Recent activity</CardTitle>
+   781→            <CardDescription>Latest 10 booking events.</CardDescription>
+   782→          </CardHeader>
+   783→          <CardContent>
+   784→            <div className="space-y-2">
+   785→              {stats.recentActivity.map((b: Booking) => (
+   786→                <div key={b.id} className="flex items-center justify-between text-xs border-b last:border-0 py-2">
+   787→                  <div className="flex items-center gap-2 min-w-0">
+   788→                    {statusBadge(b.status)}
+   789→                    <span className="truncate">{b.user?.name || 'Unknown'}</span>
+   790→                    <span className="text-muted-foreground">→</span>
+   791→                    <span className="truncate">{b.lab.name}</span>
+   792→                  </div>
+   793→                  <span className="text-muted-foreground whitespace-nowrap ml-2">{b.date} {b.startTime}–{b.endTime}</span>
+   794→                </div>
+   795→              ))}
+   796→            </div>
+   797→          </CardContent>
+   798→        </Card>
+   799→      )}
+   800→    </div>
+   801→  )
+   802→}
+   803→
+   804→function StatCard({ label, value, icon }: { label: string; value: any; icon: React.ReactNode }) {
+   805→  return (
+   806→    <Card>
+   807→      <CardContent className="p-4">
+   808→        <div className="flex items-center justify-between">
+   809→          <span className="text-xs text-muted-foreground uppercase tracking-wide">{label}</span>
+   810→          <span className="text-emerald-600">{icon}</span>
+   811→        </div>
+   812→        <div className="mt-2 text-2xl font-bold">{value}</div>
+   813→      </CardContent>
+   814→    </Card>
+   815→  )
+   816→}
+   817→
+   818→// ---------- Main page ----------
+   819→export default function Home() {
+   820→  const [user, setUser] = useState<User | null>(() => (typeof window !== 'undefined' ? loadUser() : null))
+   821→  const [tab, setTab] = useState('chat')
+   822→
+   823→  if (!user) {
+   824→    return <LoginScreen onLogin={setUser} />
+   825→  }
+   826→
+   827→  const logout = () => {
+   828→    saveUser(null)
+   829→    setUser(null)
+   830→  }
+   831→
+   832→  const roleBadge = {
+   833→    STUDENT: 'bg-blue-100 text-blue-700 dark:bg-blue-950 dark:text-blue-300',
+   834→    FACULTY: 'bg-purple-100 text-purple-700 dark:bg-purple-950 dark:text-purple-300',
+   835→    STAFF: 'bg-amber-100 text-amber-700 dark:bg-amber-950 dark:text-amber-300',
+   836→    ADMIN: 'bg-emerald-100 text-emerald-700 dark:bg-emerald-950 dark:text-emerald-300',
+   837→  }[user.role]
+   838→
+   839→  const canSeeAdmin = user.role === 'ADMIN' || user.role === 'STAFF'
+   840→
+   841→  return (
+   842→    <div className="min-h-screen flex flex-col bg-background">
+   843→      {/* Header */}
+   844→      <header className="border-b bg-background/95 backdrop-blur sticky top-0 z-10">
+   845→        <div className="max-w-6xl mx-auto px-4 h-14 flex items-center justify-between">
+   846→          <div className="flex items-center gap-2">
+   847→            <div className="w-8 h-8 rounded-lg bg-gradient-to-br from-emerald-500 to-teal-600 text-white flex items-center justify-center">
+   848→              <Bot className="w-4 h-4" />
+   849→            </div>
+   850→            <div>
+   851→              <h1 className="font-semibold text-sm leading-tight">Labby</h1>
+   852→              <p className="text-[10px] text-muted-foreground leading-tight">Campus Lab Booking Agent</p>
+   853→            </div>
+   854→          </div>
+   855→          <div className="flex items-center gap-2">
+   856→            <div className="flex items-center gap-2 px-2 py-1 rounded-md bg-muted/50">
+   857→              <div className="w-7 h-7 rounded-full bg-slate-700 text-white flex items-center justify-center text-xs font-semibold">
+   858→                {user.name.split(' ').map((s) => s[0]).slice(0, 2).join('')}
+   859→              </div>
+   860→              <div className="hidden sm:block text-xs">
+   861→                <div className="font-medium leading-tight">{user.name}</div>
+   862→                <div className="text-muted-foreground leading-tight">{user.email}</div>
+   863→              </div>
+   864→              <span className={`text-[10px] px-1.5 py-0.5 rounded-full font-medium ${roleBadge}`}>{user.role.toLowerCase()}</span>
+   865→            </div>
+   866→            <ThemeToggle />
+   867→            <Button variant="ghost" size="icon" onClick={logout} title="Sign out">
+   868→              <LogOut className="w-4 h-4" />
+   869→            </Button>
+   870→          </div>
+   871→        </div>
+   872→      </header>
+   873→
+   874→      {/* Tabs */}
+   875→      <div className="border-b bg-background">
+   876→        <div className="max-w-6xl mx-auto px-4">
+   877→          <Tabs value={tab} onValueChange={setTab}>
+   878→            <TabsList className="bg-transparent h-12 p-0 gap-4">
+   879→              <TabsTrigger value="chat" className="bg-transparent shadow-none data-[state=active]:bg-transparent data-[state=active]:shadow-none rounded-none border-b-2 border-transparent data-[state=active]:border-emerald-600 data-[state=active]:text-emerald-700 dark:data-[state=active]:text-emerald-400 flex items-center gap-1.5">
+   880→                <Bot className="w-4 h-4" /> Chat Assistant
+   881→              </TabsTrigger>
+   882→              <TabsTrigger value="calendar" className="bg-transparent shadow-none data-[state=active]:bg-transparent data-[state=active]:shadow-none rounded-none border-b-2 border-transparent data-[state=active]:border-emerald-600 data-[state=active]:text-emerald-700 dark:data-[state=active]:text-emerald-400 flex items-center gap-1.5">
+   883→                <CalendarDays className="w-4 h-4" /> Calendar
+   884→              </TabsTrigger>
+   885→              <TabsTrigger value="bookings" className="bg-transparent shadow-none data-[state=active]:bg-transparent data-[state=active]:shadow-none rounded-none border-b-2 border-transparent data-[state=active]:border-emerald-600 data-[state=active]:text-emerald-700 dark:data-[state=active]:text-emerald-400 flex items-center gap-1.5">
+   886→                <LayoutDashboard className="w-4 h-4" /> My Bookings
+   887→              </TabsTrigger>
+   888→              {canSeeAdmin && (
+   889→                <TabsTrigger value="admin" className="bg-transparent shadow-none data-[state=active]:bg-transparent data-[state=active]:shadow-none rounded-none border-b-2 border-transparent data-[state=active]:border-emerald-600 data-[state=active]:text-emerald-700 dark:data-[state=active]:text-emerald-400 flex items-center gap-1.5">
+   890→                  <Shield className="w-4 h-4" /> Admin
+   891→                </TabsTrigger>
+   892→              )}
+   893→            </TabsList>
+   894→
+   895→            <TabsContent value="chat" className="mt-0 h-[calc(100vh-3.5rem-3rem)]">
+   896→              <ChatPanel user={user} />
+   897→            </TabsContent>
+   898→            <TabsContent value="calendar" className="mt-0">
+   899→              <CalendarPanel user={user} />
+   900→            </TabsContent>
+   901→            <TabsContent value="bookings" className="mt-0">
+   902→              <MyBookingsPanel user={user} />
+   903→            </TabsContent>
+   904→            {canSeeAdmin && (
+   905→              <TabsContent value="admin" className="mt-0">
+   906→                <AdminPanel user={user} />
+   907→              </TabsContent>
+   908→            )}
+   909→          </Tabs>
+   910→        </div>
+   911→      </div>
+   912→
+   913→      {/* Footer */}
+   914→      <footer className="mt-auto border-t bg-background">
+   915→        <div className="max-w-6xl mx-auto px-4 py-3 text-xs text-muted-foreground flex items-center justify-between">
+   916→          <span>Labby · Campus Lab Booking Agent</span>
+   917→          <span className="flex items-center gap-1"><CheckCircle2 className="w-3 h-3 text-emerald-500" /> All systems operational</span>
+   918→        </div>
+   919→      </footer>
+   920→    </div>
+   921→  )
+   922→}
+   923→

@@ -1,0 +1,923 @@
+     1→     1→'use client'
+     2→     2→
+     3→     3→import { useState, useEffect, useRef, useCallback } from 'react'
+     4→     4→import { Button } from '@/components/ui/button'
+     5→     5→import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card'
+     6→     6→import { Input } from '@/components/ui/input'
+     7→     7→import { Label } from '@/components/ui/label'
+     8→     8→import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs'
+     9→     9→import { Badge } from '@/components/ui/badge'
+    10→    10→import { ScrollArea } from '@/components/ui/scroll-area'
+    11→    11→import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select'
+    12→    12→import {
+    13→    13→  Bot, Send, Calendar as CalendarIcon, LayoutDashboard, Shield, LogOut, Loader2, User,
+    14→    14→  Clock, MapPin, Users, Monitor, CheckCircle2, XCircle, CalendarDays, Sparkles, History,
+    15→    15→} from 'lucide-react'
+    16→    16→import { useToast } from '@/hooks/use-toast'
+    17→    17→import { format } from 'date-fns'
+    18→    18→import { ThemeToggle } from '@/components/theme-toggle'
+    19→    19→
+    20→    20→// ---------- Types ----------
+    21→    21→interface User {
+    22→    22→  id: string
+    23→    23→  name: string
+    24→    24→  email: string
+    25→    25→  role: 'STUDENT' | 'FACULTY' | 'STAFF' | 'ADMIN'
+    26→    26→  department?: string | null
+    27→    27→}
+    28→    28→interface Lab {
+    29→    29→  id: string
+    30→    30→  name: string
+    31→    31→  location: string
+    32→    32→  capacity: number
+    33→    33→  description?: string | null
+    34→    34→  openTime: string
+    35→    35→  closeTime: string
+    36→    36→  status: 'OPEN' | 'CLOSED' | 'MAINTENANCE'
+    37→    37→  software?: string | null
+    38→    38→}
+    39→    39→interface Slot {
+    40→    40→  start: string
+    41→    41→  end: string
+    42→    42→  booked: boolean
+    43→    43→  bookingId?: string
+    44→    44→  bookerName?: string
+    45→    45→  purpose?: string
+    46→    46→}
+    47→    47→interface Booking {
+    48→    48→  id: string
+    49→    49→  date: string
+    50→    50→  startTime: string
+    51→    51→  endTime: string
+    52→    52→  purpose?: string | null
+    53→    53→  status: 'PENDING' | 'CONFIRMED' | 'CANCELLED' | 'REJECTED'
+    54→    54→  lab: Lab
+    55→    55→  user?: User
+    56→    56→  createdAt?: string
+    57→    57→}
+    58→    58→interface ChatMessage {
+    59→    59→  role: 'user' | 'assistant'
+    60→    60→  content: string
+    61→    61→  ts: number
+    62→    62→}
+    63→    63→
+    64→    64→// ---------- Local session storage ----------
+    65→    65→const USER_KEY = 'labby_user'
+    66→    66→
+    67→    67→function loadUser(): User | null {
+    68→    68→  try {
+    69→    69→    const raw = typeof window !== 'undefined' ? localStorage.getItem(USER_KEY) : null
+    70→    70→    return raw ? (JSON.parse(raw) as User) : null
+    71→    71→  } catch {
+    72→    72→    return null
+    73→    73→  }
+    74→    74→}
+    75→    75→function saveUser(u: User | null) {
+    76→    76→  if (typeof window === 'undefined') return
+    77→    77→  if (u) localStorage.setItem(USER_KEY, JSON.stringify(u))
+    78→    78→  else localStorage.removeItem(USER_KEY)
+    79→    79→}
+    80→    80→
+    81→    81→// ---------- Quick suggestions ----------
+    82→    82→const QUICK_PROMPTS = [
+    83→    83→  'List all available labs',
+    84→    84→  'Is Lab A free tomorrow afternoon?',
+    85→    85→  'Book Lab B tomorrow 2-4pm for ML project',
+    86→    86→  'Show my bookings',
+    87→    87→]
+    88→    88→
+    89→    89→// ---------- Login screen ----------
+    90→    90→function LoginScreen({ onLogin }: { onLogin: (u: User) => void }) {
+    91→    91→  const [mode, setMode] = useState<'demo' | 'custom'>('demo')
+    92→    92→  const [name, setName] = useState('')
+    93→    93→  const [email, setEmail] = useState('')
+    94→    94→  const [role, setRole] = useState<'STUDENT' | 'FACULTY' | 'STAFF' | 'ADMIN'>('STUDENT')
+    95→    95→  const [department, setDepartment] = useState('')
+    96→    96→  const [loading, setLoading] = useState(false)
+    97→    97→  const { toast } = useToast()
+    98→    98→
+    99→    99→  const demoUsers = [
+   100→   100→    { email: 'alice@campus.edu', label: 'Alice Chen · Student · Computer Science' },
+   101→   101→    { email: 'bob@campus.edu', label: 'Bob Patel · Faculty · Computer Science' },
+   102→   102→    { email: 'carol@campus.edu', label: 'Carol Reyes · Staff · IT Services' },
+   103→   103→    { email: 'admin@campus.edu', label: 'Admin Wang · Admin · IT Services' },
+   104→   104→  ]
+   105→   105→
+   106→   106→  const loginDemo = async (email: string) => {
+   107→   107→    setLoading(true)
+   108→   108→    try {
+   109→   109→      const res = await fetch(`/api/session?email=${encodeURIComponent(email)}`)
+   110→   110→      const data = await res.json()
+   111→   111→      if (!res.ok) throw new Error(data.error || 'Login failed')
+   112→   112→      saveUser(data.user)
+   113→   113→      onLogin(data.user)
+   114→   114→    } catch (e: any) {
+   115→   115→      toast({ title: 'Login failed', description: e.message, variant: 'destructive' })
+   116→   116→    } finally {
+   117→   117→      setLoading(false)
+   118→   118→    }
+   119→   119→  }
+   120→   120→
+   121→   121→  const loginCustom = async () => {
+   122→   122→    if (!name.trim() || !email.trim()) {
+   123→   123→      toast({ title: 'Name and email are required', variant: 'destructive' })
+   124→   124→      return
+   125→   125→    }
+   126→   126→    setLoading(true)
+   127→   127→    try {
+   128→   128→      const res = await fetch('/api/session', {
+   129→   129→        method: 'POST',
+   130→   130→        headers: { 'Content-Type': 'application/json' },
+   131→   131→        body: JSON.stringify({ email: email.trim(), name: name.trim(), role, department: department.trim() || undefined }),
+   132→   132→      })
+   133→   133→      const data = await res.json()
+   134→   134→      if (!res.ok) throw new Error(data.error || 'Login failed')
+   135→   135→      saveUser(data.user)
+   136→   136→      onLogin(data.user)
+   137→   137→    } catch (e: any) {
+   138→   138→      toast({ title: 'Login failed', description: e.message, variant: 'destructive' })
+   139→   139→    } finally {
+   140→   140→      setLoading(false)
+   141→   141→    }
+   142→   142→  }
+   143→   143→
+   144→   144→  return (
+   145→   145→    <div className="relative min-h-screen flex flex-col items-center justify-center bg-gradient-to-br from-emerald-50 via-white to-teal-50 dark:from-slate-950 dark:via-slate-900 dark:to-emerald-950 p-4">
+   146→   146→      <div className="absolute top-4 right-4">
+   147→   147→        <ThemeToggle />
+   148→   148→      </div>
+   149→   149→      <div className="w-full max-w-md space-y-6">
+   150→   150→        <div className="text-center space-y-2">
+   151→   151→          <div className="inline-flex items-center justify-center w-16 h-16 rounded-2xl bg-gradient-to-br from-emerald-500 to-teal-600 text-white shadow-lg">
+   152→   152→            <Bot className="w-8 h-8" />
+   153→   153→          </div>
+   154→   154→          <h1 className="text-3xl font-bold tracking-tight">Labby</h1>
+   155→   155→          <p className="text-muted-foreground text-sm">Your AI agent for campus computer lab bookings</p>
+   156→   156→        </div>
+   157→   157→
+   158→   158→        <Card>
+   159→   159→          <CardHeader>
+   160→   160→            <CardTitle className="text-lg">Sign in to continue</CardTitle>
+   161→   161→            <CardDescription>Pick a demo account or create your own</CardDescription>
+   162→   162→          </CardHeader>
+   163→   163→          <CardContent className="space-y-4">
+   164→   164→            <Tabs value={mode} onValueChange={(v) => setMode(v as 'demo' | 'custom')}>
+   165→   165→              <TabsList className="grid w-full grid-cols-2">
+   166→   166→                <TabsTrigger value="demo">Demo accounts</TabsTrigger>
+   167→   167→                <TabsTrigger value="custom">Custom</TabsTrigger>
+   168→   168→              </TabsList>
+   169→   169→              <TabsContent value="demo" className="space-y-2 pt-4">
+   170→   170→                {demoUsers.map((u) => (
+   171→   171→                  <Button
+   172→   172→                    key={u.email}
+   173→   173→                    variant="outline"
+   174→   174→                    className="w-full justify-start text-left h-auto py-3"
+   175→   175→                    disabled={loading}
+   176→   176→                    onClick={() => loginDemo(u.email)}
+   177→   177→                  >
+   178→   178→                    <User className="w-4 h-4 mr-3 shrink-0" />
+   179→   179→                    <span className="text-sm">{u.label}</span>
+   180→   180→                  </Button>
+   181→   181→                ))}
+   182→   182→              </TabsContent>
+   183→   183→              <TabsContent value="custom" className="space-y-3 pt-4">
+   184→   184→                <div className="space-y-1.5">
+   185→   185→                  <Label htmlFor="name">Name</Label>
+   186→   186→                  <Input id="name" value={name} onChange={(e) => setName(e.target.value)} placeholder="Jane Doe" />
+   187→   187→                </div>
+   188→   188→                <div className="space-y-1.5">
+   189→   189→                  <Label htmlFor="email">Email</Label>
+   190→   190→                  <Input id="email" type="email" value={email} onChange={(e) => setEmail(e.target.value)} placeholder="jane@campus.edu" />
+   191→   191→                </div>
+   192→   192→                <div className="space-y-1.5">
+   193→   193→                  <Label htmlFor="role">Role</Label>
+   194→   194→                  <Select value={role} onValueChange={(v) => setRole(v as any)}>
+   195→   195→                    <SelectTrigger><SelectValue /></SelectTrigger>
+   196→   196→                    <SelectContent>
+   197→   197→                      <SelectItem value="STUDENT">Student</SelectItem>
+   198→   198→                      <SelectItem value="FACULTY">Faculty</SelectItem>
+   199→   199→                      <SelectItem value="STAFF">Staff</SelectItem>
+   200→   200→                      <SelectItem value="ADMIN">Admin</SelectItem>
+   201→   201→                    </SelectContent>
+   202→   202→                  </Select>
+   203→   203→                </div>
+   204→   204→                <div className="space-y-1.5">
+   205→   205→                  <Label htmlFor="dept">Department (optional)</Label>
+   206→   206→                  <Input id="dept" value={department} onChange={(e) => setDepartment(e.target.value)} placeholder="Computer Science" />
+   207→   207→                </div>
+   208→   208→                <Button className="w-full" disabled={loading} onClick={loginCustom}>
+   209→   209→                  {loading ? <Loader2 className="w-4 h-4 mr-2 animate-spin" /> : null}
+   210→   210→                  Sign in
+   211→   211→                </Button>
+   212→   212→              </TabsContent>
+   213→   213→            </Tabs>
+   214→   214→          </CardContent>
+   215→   215→        </Card>
+   216→   216→        <p className="text-xs text-center text-muted-foreground">
+   217→   217→          By signing in you agree to campus IT acceptable-use policy.
+   218→   218→        </p>
+   219→   219→      </div>
+   220→   220→    </div>
+   221→   221→  )
+   222→   222→}
+   223→   223→
+   224→   224→// ---------- Chat Panel ----------
+   225→   225→function ChatPanel({ user }: { user: User }) {
+   226→   226→  const [messages, setMessages] = useState<ChatMessage[]>([
+   227→   227→    {
+   228→   228→      role: 'assistant',
+   229→   229→      content: `Hi ${user.name.split(' ')[0]}! I'm Labby, your lab booking assistant. I can help you book a computer lab, check availability, view your bookings, or cancel one. What would you like to do?`,
+   230→   230→      ts: Date.now(),
+   231→   231→    },
+   232→   232→  ])
+   233→   233→  const [input, setInput] = useState('')
+   234→   234→  const [loading, setLoading] = useState(false)
+   235→   235→  const scrollRef = useRef<HTMLDivElement>(null)
+   236→   236→  const { toast } = useToast()
+   237→   237→
+   238→   238→  useEffect(() => {
+   239→   239→    scrollRef.current?.scrollTo({ top: scrollRef.current.scrollHeight, behavior: 'smooth' })
+   240→   240→  }, [messages, loading])
+   241→   241→
+   242→   242→  const send = async (text: string) => {
+   243→   243→    const trimmed = text.trim()
+   244→   244→    if (!trimmed || loading) return
+   245→   245→    const history = messages.map((m) => ({ role: m.role, content: m.content }))
+   246→   246→    const next: ChatMessage[] = [...messages, { role: 'user', content: trimmed, ts: Date.now() }]
+   247→   247→    setMessages(next)
+   248→   248→    setInput('')
+   249→   249→    setLoading(true)
+   250→   250→    try {
+   251→   251→      const res = await fetch('/api/chat', {
+   252→   252→        method: 'POST',
+   253→   253→        headers: { 'Content-Type': 'application/json' },
+   254→   254→        body: JSON.stringify({ userId: user.id, message: trimmed, history }),
+   255→   255→      })
+   256→   256→      const data = await res.json()
+   257→   257→      if (!res.ok) throw new Error(data.error || 'Chat failed')
+   258→   258→      setMessages((prev) => [...prev, { role: 'assistant', content: data.reply, ts: Date.now() }])
+   259→   259→    } catch (e: any) {
+   260→   260→      toast({ title: 'Chat error', description: e.message, variant: 'destructive' })
+   261→   261→      setMessages((prev) => [
+   262→   262→        ...prev,
+   263→   263→        { role: 'assistant', content: `Sorry, I hit an error: ${e.message}. Please try again.`, ts: Date.now() },
+   264→   264→      ])
+   265→   265→    } finally {
+   266→   266→      setLoading(false)
+   267→   267→    }
+   268→   268→  }
+   269→   269→
+   270→   270→  return (
+   271→   271→    <div className="flex flex-col h-full">
+   272→   272→      <div className="flex-1 overflow-hidden">
+   273→   273→        <ScrollArea className="h-full" ref={scrollRef as any}>
+   274→   274→          <div className="space-y-4 p-4 max-w-3xl mx-auto">
+   275→   275→            {messages.map((m, i) => (
+   276→   276→              <MessageBubble key={i} message={m} userName={user.name} />
+   277→   277→            ))}
+   278→   278→            {loading && (
+   279→   279→              <div className="flex gap-3 items-start">
+   280→   280→                <div className="w-8 h-8 rounded-full bg-gradient-to-br from-emerald-500 to-teal-600 text-white flex items-center justify-center shrink-0">
+   281→   281→                  <Bot className="w-4 h-4" />
+   282→   282→                </div>
+   283→   283→                <div className="bg-muted rounded-2xl rounded-tl-sm px-4 py-3 flex items-center gap-2">
+   284→   284→                  <Loader2 className="w-4 h-4 animate-spin" />
+   285→   285→                  <span className="text-sm text-muted-foreground">Thinking…</span>
+   286→   286→                </div>
+   287→   287→              </div>
+   288→   288→            )}
+   289→   289→          </div>
+   290→   290→        </ScrollArea>
+   291→   291→      </div>
+   292→   292→
+   293→   293→      <div className="border-t bg-background/80 backdrop-blur">
+   294→   294→        <div className="max-w-3xl mx-auto p-4 space-y-3">
+   295→   295→          <div className="flex flex-wrap gap-2">
+   296→   296→            {QUICK_PROMPTS.map((p) => (
+   297→   297→              <Button
+   298→   298→                key={p}
+   299→   299→                variant="outline"
+   300→   300→                size="sm"
+   301→   301→                className="text-xs h-8"
+   302→   302→                disabled={loading}
+   303→   303→                onClick={() => send(p)}
+   304→   304→              >
+   305→   305→                {p}
+   306→   306→              </Button>
+   307→   307→            ))}
+   308→   308→          </div>
+   309→   309→          <form
+   310→   310→            onSubmit={(e) => {
+   311→   311→              e.preventDefault()
+   312→   312→              send(input)
+   313→   313→            }}
+   314→   314→            className="flex gap-2"
+   315→   315→          >
+   316→   316→            <Input
+   317→   317→              value={input}
+   318→   318→              onChange={(e) => setInput(e.target.value)}
+   319→   319→              placeholder="Ask Labby anything — e.g. 'book Lab A tomorrow 2-4pm'"
+   320→   320→              disabled={loading}
+   321→   321→              className="flex-1"
+   322→   322→            />
+   323→   323→            <Button type="submit" disabled={loading || !input.trim()} size="icon" className="bg-emerald-600 hover:bg-emerald-700 text-white">
+   324→   324→              {loading ? <Loader2 className="w-4 h-4 animate-spin" /> : <Send className="w-4 h-4" />}
+   325→   325→            </Button>
+   326→   326→          </form>
+   327→   327→        </div>
+   328→   328→      </div>
+   329→   329→    </div>
+   330→   330→  )
+   331→   331→}
+   332→   332→
+   333→   333→function MessageBubble({ message, userName }: { message: ChatMessage; userName: string }) {
+   334→   334→  const isUser = message.role === 'user'
+   335→   335→  const initials = isUser ? userName.split(' ').map((s) => s[0]).slice(0, 2).join('') : 'L'
+   336→   336→
+   337→   337→  return (
+   338→   338→    <div className={`flex gap-3 items-start ${isUser ? 'flex-row-reverse' : ''}`}>
+   339→   339→      <div
+   340→   340→        className={`w-8 h-8 rounded-full flex items-center justify-center shrink-0 text-white text-xs font-semibold ${
+   341→   341→          isUser ? 'bg-slate-700' : 'bg-gradient-to-br from-emerald-500 to-teal-600'
+   342→   342→        }`}
+   343→   343→      >
+   344→   344→        {isUser ? initials : <Bot className="w-4 h-4" />}
+   345→   345→      </div>
+   346→   346→      <div
+   347→   347→        className={`max-w-[80%] px-4 py-3 rounded-2xl text-sm whitespace-pre-wrap ${
+   348→   348→          isUser ? 'bg-slate-700 text-white rounded-tr-sm' : 'bg-muted rounded-tl-sm'
+   349→   349→        }`}
+   350→   350→      >
+   351→   351→        <MarkdownLite content={message.content} />
+   352→   352→      </div>
+   353→   353→    </div>
+   354→   354→  )
+   355→   355→}
+   356→   356→
+   357→   357→// Lightweight markdown renderer — handles **bold**, `code`, and bullet lists
+   358→   358→function MarkdownLite({ content }: { content: string }) {
+   359→   359→  const lines = content.split('\n')
+   360→   360→  return (
+   361→   361→    <div className="space-y-1">
+   362→   362→      {lines.map((line, i) => {
+   363→   363→        if (line.trim().startsWith('• ') || line.trim().startsWith('- ')) {
+   364→   364→          return (
+   365→   365→            <div key={i} className="flex gap-2 pl-1">
+   366→   366→              <span className="text-emerald-500 font-bold">•</span>
+   367→   367→              <span>{renderInline(line.trim().slice(2))}</span>
+   368→   368→            </div>
+   369→   369→          )
+   370→   370→        }
+   371→   371→        return <div key={i}>{renderInline(line) || <br />}</div>
+   372→   372→      })}
+   373→   373→    </div>
+   374→   374→  )
+   375→   375→}
+   376→   376→
+   377→   377→function renderInline(text: string) {
+   378→   378→  if (!text) return null
+   379→   379→  const parts = text.split(/(\*\*[^*]+\*\*|`[^`]+`)/g)
+   380→   380→  return parts.map((p, i) => {
+   381→   381→    if (p.startsWith('**') && p.endsWith('**')) {
+   382→   382→      return <strong key={i} className="font-semibold">{p.slice(2, -2)}</strong>
+   383→   383→    }
+   384→   384→    if (p.startsWith('`') && p.endsWith('`')) {
+   385→   385→      return <code key={i} className="px-1.5 py-0.5 rounded bg-background/60 text-xs font-mono">{p.slice(1, -1)}</code>
+   386→   386→    }
+   387→   387→    return <span key={i}>{p}</span>
+   388→   388→  })
+   389→   389→}
+   390→   390→
+   391→   391→// ---------- Calendar / Availability Panel ----------
+   392→   392→function CalendarPanel({ user }: { user: User }) {
+   393→   393→  const [labs, setLabs] = useState<Lab[]>([])
+   394→   394→  const [selectedLab, setSelectedLab] = useState<string>('')
+   395→   395→  const [selectedDate, setSelectedDate] = useState<string>(new Date().toISOString().slice(0, 10))
+   396→   396→  const [slots, setSlots] = useState<Slot[]>([])
+   397→   397→  const [loading, setLoading] = useState(false)
+   398→   398→  const { toast } = useToast()
+   399→   399→
+   400→   400→  useEffect(() => {
+   401→   401→    fetch('/api/labs')
+   402→   402→      .then((r) => r.json())
+   403→   403→      .then((d) => {
+   404→   404→        setLabs(d.labs || [])
+   405→   405→        if (d.labs?.length) setSelectedLab(d.labs[0].id)
+   406→   406→      })
+   407→   407→  }, [])
+   408→   408→
+   409→   409→  const loadSchedule = useCallback(async () => {
+   410→   410→    if (!selectedLab || !selectedDate) return
+   411→   411→    setLoading(true)
+   412→   412→    try {
+   413→   413→      const res = await fetch(`/api/labs/${selectedLab}/availability?date=${selectedDate}`)
+   414→   414→      const data = await res.json()
+   415→   415→      if (!res.ok) throw new Error(data.error)
+   416→   416→      setSlots(data.slots || [])
+   417→   417→    } catch (e: any) {
+   418→   418→      toast({ title: 'Failed to load schedule', description: e.message, variant: 'destructive' })
+   419→   419→      setSlots([])
+   420→   420→    } finally {
+   421→   421→      setLoading(false)
+   422→   422→    }
+   423→   423→  }, [selectedLab, selectedDate, toast])
+   424→   424→
+   425→   425→  useEffect(() => {
+   426→   426→    loadSchedule()
+   427→   427→  }, [loadSchedule])
+   428→   428→
+   429→   429→  const selectedLabObj = labs.find((l) => l.id === selectedLab)
+   430→   430→
+   431→   431→  return (
+   432→   432→    <div className="space-y-4 p-4 max-w-5xl mx-auto">
+   433→   433→      <Card>
+   434→   434→        <CardHeader>
+   435→   435→          <CardTitle className="flex items-center gap-2"><CalendarDays className="w-5 h-5 text-emerald-600" /> Lab availability</CardTitle>
+   436→   436→          <CardDescription>Check free and booked time slots for any lab on any date.</CardDescription>
+   437→   437→        </CardHeader>
+   438→   438→        <CardContent className="space-y-4">
+   439→   439→          <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+   440→   440→            <div className="space-y-1.5">
+   441→   441→              <Label htmlFor="lab">Lab</Label>
+   442→   442→              <Select value={selectedLab} onValueChange={setSelectedLab}>
+   443→   443→                <SelectTrigger><SelectValue placeholder="Select a lab" /></SelectTrigger>
+   444→   444→                <SelectContent>
+   445→   445→                  {labs.map((l) => (
+   446→   446→                    <SelectItem key={l.id} value={l.id}>
+   447→   447→                      {l.name} {l.status !== 'OPEN' ? `(${l.status.toLowerCase()})` : ''}
+   448→   448→                    </SelectItem>
+   449→   449→                  ))}
+   450→   450→                </SelectContent>
+   451→   451→              </Select>
+   452→   452→            </div>
+   453→   453→            <div className="space-y-1.5">
+   454→   454→              <Label htmlFor="date">Date</Label>
+   455→   455→              <Input id="date" type="date" value={selectedDate} onChange={(e) => setSelectedDate(e.target.value)} />
+   456→   456→            </div>
+   457→   457→          </div>
+   458→   458→
+   459→   459→          {selectedLabObj && (
+   460→   460→            <div className="rounded-lg border bg-muted/30 p-3 text-sm">
+   461→   461→              <div className="font-semibold mb-1">{selectedLabObj.name}</div>
+   462→   462→              <div className="grid grid-cols-2 sm:grid-cols-4 gap-2 text-muted-foreground text-xs">
+   463→   463→                <span className="flex items-center gap-1"><MapPin className="w-3 h-3" /> {selectedLabObj.location}</span>
+   464→   464→                <span className="flex items-center gap-1"><Users className="w-3 h-3" /> {selectedLabObj.capacity} seats</span>
+   465→   465→                <span className="flex items-center gap-1"><Clock className="w-3 h-3" /> {selectedLabObj.openTime}–{selectedLabObj.closeTime}</span>
+   466→   466→                <span className="flex items-center gap-1"><Monitor className="w-3 h-3" /> {selectedLabObj.software?.split(',')[0] || 'Standard suite'}</span>
+   467→   467→              </div>
+   468→   468→            </div>
+   469→   469→          )}
+   470→   470→
+   471→   471→          <div>
+   472→   472→            <div className="flex items-center justify-between mb-2">
+   473→   473→              <h4 className="text-sm font-medium">
+   474→   474→                Schedule for {format(new Date(selectedDate + 'T00:00:00'), 'EEEE, MMM d, yyyy')}
+   475→   475→              </h4>
+   476→   476→              {loading && <Loader2 className="w-4 h-4 animate-spin" />}
+   477→   477→            </div>
+   478→   478→            <div className="space-y-1.5">
+   479→   479→              {!loading && slots.length === 0 && (
+   480→   480→                <div className="text-sm text-muted-foreground py-8 text-center">Lab is closed or unavailable on this date.</div>
+   481→   481→              )}
+   482→   482→              {slots.map((s, i) => (
+   483→   483→                <div
+   484→   484→                  key={i}
+   485→   485→                  className={`flex items-center justify-between rounded-md border px-3 py-2 text-sm ${
+   486→   486→                    s.booked ? 'border-red-200 bg-red-50 dark:border-red-900/50 dark:bg-red-950/30' : 'border-emerald-200 bg-emerald-50 dark:border-emerald-900/50 dark:bg-emerald-950/30'
+   487→   487→                  }`}
+   488→   488→                >
+   489→   489→                  <div className="flex items-center gap-2">
+   490→   490→                    <Clock className="w-3.5 h-3.5 text-muted-foreground" />
+   491→   491→                    <span className="font-mono">{s.start} – {s.end}</span>
+   492→   492→                  </div>
+   493→   493→                  {s.booked ? (
+   494→   494→                    <Badge variant="destructive" className="text-xs">
+   495→   495→                      Booked{s.bookerName ? ` · ${s.bookerName}` : ''}{s.purpose ? ` · ${s.purpose}` : ''}
+   496→   496→                    </Badge>
+   497→   497→                  ) : (
+   498→   498→                    <Badge variant="default" className="text-xs bg-emerald-600 hover:bg-emerald-700">Free</Badge>
+   499→   499→                  )}
+   500→   500→                </div>
+   501→   501→              ))}
+   502→   502→            </div>
+   503→   503→          </div>
+   504→   504→
+   505→   505→          <div className="rounded-md bg-emerald-50 dark:bg-emerald-950/30 border border-emerald-200 dark:border-emerald-900/50 p-3 text-sm text-muted-foreground">
+   506→   506→            <Sparkles className="w-4 h-4 inline mr-1 text-emerald-600" />
+   507→   507→            Tip: Switch to the Chat tab and just say "book {selectedLabObj?.name.split('—')[0].trim() || 'Lab A'} {selectedDate} 14:00-16:00" — Labby will handle it.
+   508→   508→          </div>
+   509→   509→        </CardContent>
+   510→   510→      </Card>
+   511→   511→    </div>
+   512→   512→  )
+   513→   513→}
+   514→   514→
+   515→   515→// ---------- My Bookings Panel ----------
+   516→   516→function MyBookingsPanel({ user }: { user: User }) {
+   517→   517→  const [bookings, setBookings] = useState<Booking[]>([])
+   518→   518→  const [loading, setLoading] = useState(true)
+   519→   519→  const { toast } = useToast()
+   520→   520→
+   521→   521→  const load = useCallback(async () => {
+   522→   522→    setLoading(true)
+   523→   523→    try {
+   524→   524→      const res = await fetch(`/api/bookings?userId=${user.id}&scope=mine`)
+   525→   525→      const data = await res.json()
+   526→   526→      if (!res.ok) throw new Error(data.error)
+   527→   527→      setBookings(data.bookings || [])
+   528→   528→    } catch (e: any) {
+   529→   529→      toast({ title: 'Failed to load bookings', description: e.message, variant: 'destructive' })
+   530→   530→    } finally {
+   531→   531→      setLoading(false)
+   532→   532→    }
+   533→   533→  }, [user.id, toast])
+   534→   534→
+   535→   535→  useEffect(() => {
+   536→   536→    load()
+   537→   537→  }, [load])
+   538→   538→
+   539→   539→  const cancel = async (id: string) => {
+   540→   540→    try {
+   541→   541→      const res = await fetch(`/api/bookings/${id}?userId=${user.id}`, { method: 'DELETE' })
+   542→   542→      const data = await res.json()
+   543→   543→      if (!res.ok) throw new Error(data.error)
+   544→   544→      toast({ title: 'Booking cancelled', description: 'The slot is now free for others.' })
+   545→   545→      load()
+   546→   546→    } catch (e: any) {
+   547→   547→      toast({ title: 'Failed to cancel', description: e.message, variant: 'destructive' })
+   548→   548→    }
+   549→   549→  }
+   550→   550→
+   551→   551→  const today = new Date().toISOString().slice(0, 10)
+   552→   552→  const upcoming = bookings.filter((b) => b.date >= today)
+   553→   553→  const past = bookings.filter((b) => b.date < today)
+   554→   554→
+   555→   555→  return (
+   556→   556→    <div className="space-y-4 p-4 max-w-5xl mx-auto">
+   557→   557→      <Card>
+   558→   558→        <CardHeader>
+   559→   559→          <CardTitle className="flex items-center gap-2"><LayoutDashboard className="w-5 h-5 text-emerald-600" /> My bookings</CardTitle>
+   560→   560→          <CardDescription>Your upcoming and past lab reservations.</CardDescription>
+   561→   561→        </CardHeader>
+   562→   562→        <CardContent>
+   563→   563→          {loading ? (
+   564→   564→            <div className="flex items-center justify-center py-8"><Loader2 className="w-6 h-6 animate-spin text-muted-foreground" /></div>
+   565→   565→          ) : bookings.length === 0 ? (
+   566→   566→            <div className="text-center py-12 text-muted-foreground">
+   567→   567→              <CalendarIcon className="w-10 h-10 mx-auto mb-3 opacity-50" />
+   568→   568→              <p>You don't have any bookings yet.</p>
+   569→   569→              <p className="text-sm mt-1">Use the Chat tab to ask Labby to book a lab for you.</p>
+   570→   570→            </div>
+   571→   571→          ) : (
+   572→   572→            <div className="space-y-6">
+   573→   573→              <div>
+   574→   574→                <h3 className="text-sm font-semibold mb-2 text-muted-foreground uppercase tracking-wide">Upcoming ({upcoming.length})</h3>
+   575→   575→                {upcoming.length === 0 ? (
+   576→   576→                  <p className="text-sm text-muted-foreground">No upcoming bookings.</p>
+   577→   577→                ) : (
+   578→   578→                  <div className="space-y-2">
+   579→   579→                    {upcoming.map((b) => (
+   580→   580→                      <BookingCard key={b.id} booking={b} onCancel={() => cancel(b.id)} />
+   581→   581→                    ))}
+   582→   582→                  </div>
+   583→   583→                )}
+   584→   584→              </div>
+   585→   585→              {past.length > 0 && (
+   586→   586→                <div>
+   587→   587→                  <h3 className="text-sm font-semibold mb-2 text-muted-foreground uppercase tracking-wide">Past ({past.length})</h3>
+   588→   588→                  <div className="space-y-2 opacity-70">
+   589→   589→                    {past.map((b) => (
+   590→   590→                      <BookingCard key={b.id} booking={b} onCancel={() => cancel(b.id)} />
+   591→   591→                    ))}
+   592→   592→                  </div>
+   593→   593→                </div>
+   594→   594→              )}
+   595→   595→            </div>
+   596→   596→          )}
+   597→   597→        </CardContent>
+   598→   598→      </Card>
+   599→   599→    </div>
+   600→   600→  )
+   601→   601→}
+   602→   602→
+   603→   603→function BookingCard({ booking, onCancel }: { booking: Booking; onCancel: () => void }) {
+   604→   604→  const cancelled = booking.status === 'CANCELLED' || booking.status === 'REJECTED'
+   605→   605→  return (
+   606→   606→    <div className={`flex items-center justify-between rounded-lg border p-3 ${cancelled ? 'opacity-60' : ''}`}>
+   607→   607→      <div className="flex-1 min-w-0">
+   608→   608→        <div className="flex items-center gap-2 flex-wrap">
+   609→   609→          <span className="font-medium text-sm truncate">{booking.lab.name}</span>
+   610→   610→          <Badge variant={cancelled ? 'secondary' : 'default'} className={`text-xs ${cancelled ? '' : 'bg-emerald-600 hover:bg-emerald-700'}`}>
+   611→   611→            {booking.status.toLowerCase()}
+   612→   612→          </Badge>
+   613→   613→        </div>
+   614→   614→        <div className="text-xs text-muted-foreground mt-1 flex items-center gap-3 flex-wrap">
+   615→   615→          <span className="flex items-center gap-1"><CalendarIcon className="w-3 h-3" /> {format(new Date(booking.date + 'T00:00:00'), 'EEE, MMM d, yyyy')}</span>
+   616→   616→          <span className="flex items-center gap-1"><Clock className="w-3 h-3" /> {booking.startTime}–{booking.endTime}</span>
+   617→   617→        </div>
+   618→   618→        {booking.purpose && <div className="text-xs text-muted-foreground mt-0.5">Purpose: {booking.purpose}</div>}
+   619→   619→        <div className="text-[10px] text-muted-foreground/70 mt-1 font-mono">ID: {booking.id}</div>
+   620→   620→      </div>
+   621→   621→      {!cancelled && (
+   622→   622→        <Button variant="ghost" size="sm" className="text-red-600 hover:text-red-700 hover:bg-red-50" onClick={onCancel}>
+   623→   623→          <XCircle className="w-4 h-4 mr-1" /> Cancel
+   624→   624→        </Button>
+   625→   625→      )}
+   626→   626→    </div>
+   627→   627→  )
+   628→   628→}
+   629→   629→
+   630→   630→// ---------- Admin Panel ----------
+   631→   631→function AdminPanel({ user }: { user: User }) {
+   632→   632→  const [stats, setStats] = useState<any>(null)
+   633→   633→  const [loading, setLoading] = useState(true)
+   634→   634→  const [allBookings, setAllBookings] = useState<Booking[]>([])
+   635→   635→  const [allBookingsDate, setAllBookingsDate] = useState(new Date().toISOString().slice(0, 10))
+   636→   636→  const { toast } = useToast()
+   637→   637→
+   638→   638→  const loadStats = useCallback(async () => {
+   639→   639→    setLoading(true)
+   640→   640→    try {
+   641→   641→      const res = await fetch(`/api/admin/stats?userId=${user.id}`)
+   642→   642→      const data = await res.json()
+   643→   643→      if (!res.ok) throw new Error(data.error)
+   644→   644→      setStats(data)
+   645→   645→    } catch (e: any) {
+   646→   646→      toast({ title: 'Failed to load admin stats', description: e.message, variant: 'destructive' })
+   647→   647→    } finally {
+   648→   648→      setLoading(false)
+   649→   649→    }
+   650→   650→  }, [user.id, toast])
+   651→   651→
+   652→   652→  const loadAllBookings = useCallback(async () => {
+   653→   653→    try {
+   654→   654→      const res = await fetch(`/api/bookings?userId=${user.id}&scope=all&date=${allBookingsDate}`)
+   655→   655→      const data = await res.json()
+   656→   656→      if (!res.ok) throw new Error(data.error)
+   657→   657→      setAllBookings(data.bookings || [])
+   658→   658→    } catch (e: any) {
+   659→   659→      toast({ title: 'Failed to load bookings', description: e.message, variant: 'destructive' })
+   660→   660→    }
+   661→   661→  }, [user.id, allBookingsDate, toast])
+   662→   662→
+   663→   663→  useEffect(() => {
+   664→   664→    loadStats()
+   665→   665→  }, [loadStats])
+   666→   666→
+   667→   667→  useEffect(() => {
+   668→   668→    loadAllBookings()
+   669→   669→  }, [loadAllBookings])
+   670→   670→
+   671→   671→  if (user.role !== 'ADMIN' && user.role !== 'STAFF') {
+   672→   672→    return (
+   673→   673→      <div className="p-4 max-w-5xl mx-auto">
+   674→   674→        <Card>
+   675→   675→          <CardContent className="py-12 text-center">
+   676→   676→            <Shield className="w-10 h-10 mx-auto mb-3 text-muted-foreground/50" />
+   677→   677→            <p className="text-muted-foreground">Admin access required.</p>
+   678→   678→            <p className="text-sm text-muted-foreground mt-1">Only STAFF and ADMIN roles can view campus-wide stats.</p>
+   679→   679→          </CardContent>
+   680→   680→        </Card>
+   681→   681→      </div>
+   682→   682→    )
+   683→   683→  }
+   684→   684→
+   685→   685→  const statusBadge = (status: string) => {
+   686→   686→    const cls: Record<string, string> = {
+   687→   687→      CONFIRMED: 'bg-emerald-600 hover:bg-emerald-700',
+   688→   688→      PENDING: 'bg-amber-500 hover:bg-amber-600',
+   689→   689→      CANCELLED: 'bg-slate-500 hover:bg-slate-600',
+   690→   690→      REJECTED: 'bg-red-500 hover:bg-red-600',
+   691→   691→    }
+   692→   692→    return <Badge variant="default" className={`text-xs ${cls[status] || ''}`}>{status.toLowerCase()}</Badge>
+   693→   693→  }
+   694→   694→
+   695→   695→  return (
+   696→   696→    <div className="space-y-4 p-4 max-w-5xl mx-auto">
+   697→   697→      {/* Stats grid */}
+   698→   698→      <div className="grid grid-cols-2 lg:grid-cols-4 gap-3">
+   699→   699→        <StatCard label="Total labs" value={stats?.totals?.labs ?? '—'} icon={<Monitor className="w-4 h-4" />} />
+   700→   700→        <StatCard label="Total users" value={stats?.totals?.users ?? '—'} icon={<Users className="w-4 h-4" />} />
+   701→   701→        <StatCard label="Bookings today" value={stats?.totals?.bookingsToday ?? '—'} icon={<CalendarIcon className="w-4 h-4" />} />
+   702→   702→        <StatCard label="Bookings next 7 days" value={stats?.totals?.bookingsNext7Days ?? '—'} icon={<CalendarDays className="w-4 h-4" />} />
+   703→   703→      </div>
+   704→   704→
+   705→   705→      {/* Lab usage */}
+   706→   706→      <Card>
+   707→   707→        <CardHeader>
+   708→   708→          <CardTitle className="flex items-center gap-2"><History className="w-5 h-5 text-emerald-600" /> Lab usage (next 7 days)</CardTitle>
+   709→   709→          <CardDescription>Bookings per lab over the coming week.</CardDescription>
+   710→   710→        </CardHeader>
+   711→   711→        <CardContent>
+   712→   712→          {loading ? (
+   713→   713→            <div className="flex items-center justify-center py-6"><Loader2 className="w-6 h-6 animate-spin text-muted-foreground" /></div>
+   714→   714→          ) : (
+   715→   715→            <div className="space-y-2">
+   716→   716→              {stats?.labUsage?.map((lab: any, i: number) => {
+   717→   717→                const max = Math.max(1, ...stats.labUsage.map((l: any) => l.bookingsNext7Days))
+   718→   718→                const pct = (lab.bookingsNext7Days / max) * 100
+   719→   719→                return (
+   720→   720→                  <div key={i} className="space-y-1">
+   721→   721→                    <div className="flex items-center justify-between text-sm">
+   722→   722→                      <span className="truncate">{lab.lab}</span>
+   723→   723→                      <span className="text-muted-foreground text-xs ml-2">{lab.bookingsNext7Days} bookings · {lab.status.toLowerCase()}</span>
+   724→   724→                    </div>
+   725→   725→                    <div className="h-2 rounded-full bg-muted overflow-hidden">
+   726→   726→                      <div className="h-full bg-gradient-to-r from-emerald-500 to-teal-600" style={{ width: `${pct}%` }} />
+   727→   727→                    </div>
+   728→   728→                  </div>
+   729→   729→                )
+   730→   730→              })}
+   731→   731→            </div>
+   732→   732→          )}
+   733→   733→        </CardContent>
+   734→   734→      </Card>
+   735→   735→
+   736→   736→      {/* All bookings for a date */}
+   737→   737→      <Card>
+   738→   738→        <CardHeader>
+   739→   739→          <CardTitle className="flex items-center gap-2"><CalendarDays className="w-5 h-5 text-emerald-600" /> All bookings on date</CardTitle>
+   740→   740→          <CardDescription>Browse every reservation across campus.</CardDescription>
+   741→   741→        </CardHeader>
+   742→   742→        <CardContent className="space-y-3">
+   743→   743→          <div className="flex gap-2 items-end">
+   744→   744→            <div className="space-y-1.5">
+   745→   745→              <Label htmlFor="all-date">Date</Label>
+   746→   746→              <Input id="all-date" type="date" value={allBookingsDate} onChange={(e) => setAllBookingsDate(e.target.value)} className="w-auto" />
+   747→   747→            </div>
+   748→   748→          </div>
+   749→   749→          {allBookings.length === 0 ? (
+   750→   750→            <p className="text-sm text-muted-foreground py-6 text-center">No bookings on this date.</p>
+   751→   751→          ) : (
+   752→   752→            <div className="rounded-md border overflow-hidden">
+   753→   753→              <div className="grid grid-cols-12 gap-2 bg-muted/50 px-3 py-2 text-xs font-medium text-muted-foreground">
+   754→   754→                <div className="col-span-4">Lab</div>
+   755→   755→                <div className="col-span-2">Time</div>
+   756→   756→                <div className="col-span-3">Booked by</div>
+   757→   757→                <div className="col-span-2">Purpose</div>
+   758→   758→                <div className="col-span-1">Status</div>
+   759→   759→              </div>
+   760→   760→              <div className="divide-y max-h-96 overflow-y-auto">
+   761→   761→                {allBookings.map((b) => (
+   762→   762→                  <div key={b.id} className="grid grid-cols-12 gap-2 px-3 py-2 text-xs items-center">
+   763→   763→                    <div className="col-span-4 truncate">{b.lab.name}</div>
+   764→   764→                    <div className="col-span-2 font-mono">{b.startTime}–{b.endTime}</div>
+   765→   765→                    <div className="col-span-3 truncate">{b.user?.name || '—'} <span className="text-muted-foreground">({(b.user?.role || '').toLowerCase()})</span></div>
+   766→   766→                    <div className="col-span-2 truncate text-muted-foreground">{b.purpose || '—'}</div>
+   767→   767→                    <div className="col-span-1">{statusBadge(b.status)}</div>
+   768→   768→                  </div>
+   769→   769→                ))}
+   770→   770→              </div>
+   771→   771→            </div>
+   772→   772→          )}
+   773→   773→        </CardContent>
+   774→   774→      </Card>
+   775→   775→
+   776→   776→      {/* Recent activity */}
+   777→   777→      {stats?.recentActivity?.length > 0 && (
+   778→   778→        <Card>
+   779→   779→          <CardHeader>
+   780→   780→            <CardTitle className="flex items-center gap-2"><History className="w-5 h-5 text-emerald-600" /> Recent activity</CardTitle>
+   781→   781→            <CardDescription>Latest 10 booking events.</CardDescription>
+   782→   782→          </CardHeader>
+   783→   783→          <CardContent>
+   784→   784→            <div className="space-y-2">
+   785→   785→              {stats.recentActivity.map((b: Booking) => (
+   786→   786→                <div key={b.id} className="flex items-center justify-between text-xs border-b last:border-0 py-2">
+   787→   787→                  <div className="flex items-center gap-2 min-w-0">
+   788→   788→                    {statusBadge(b.status)}
+   789→   789→                    <span className="truncate">{b.user?.name || 'Unknown'}</span>
+   790→   790→                    <span className="text-muted-foreground">→</span>
+   791→   791→                    <span className="truncate">{b.lab.name}</span>
+   792→   792→                  </div>
+   793→   793→                  <span className="text-muted-foreground whitespace-nowrap ml-2">{b.date} {b.startTime}–{b.endTime}</span>
+   794→   794→                </div>
+   795→   795→              ))}
+   796→   796→            </div>
+   797→   797→          </CardContent>
+   798→   798→        </Card>
+   799→   799→      )}
+   800→   800→    </div>
+   801→   801→  )
+   802→   802→}
+   803→   803→
+   804→   804→function StatCard({ label, value, icon }: { label: string; value: any; icon: React.ReactNode }) {
+   805→   805→  return (
+   806→   806→    <Card>
+   807→   807→      <CardContent className="p-4">
+   808→   808→        <div className="flex items-center justify-between">
+   809→   809→          <span className="text-xs text-muted-foreground uppercase tracking-wide">{label}</span>
+   810→   810→          <span className="text-emerald-600">{icon}</span>
+   811→   811→        </div>
+   812→   812→        <div className="mt-2 text-2xl font-bold">{value}</div>
+   813→   813→      </CardContent>
+   814→   814→    </Card>
+   815→   815→  )
+   816→   816→}
+   817→   817→
+   818→   818→// ---------- Main page ----------
+   819→   819→export default function Home() {
+   820→   820→  const [user, setUser] = useState<User | null>(() => (typeof window !== 'undefined' ? loadUser() : null))
+   821→   821→  const [tab, setTab] = useState('chat')
+   822→   822→
+   823→   823→  if (!user) {
+   824→   824→    return <LoginScreen onLogin={setUser} />
+   825→   825→  }
+   826→   826→
+   827→   827→  const logout = () => {
+   828→   828→    saveUser(null)
+   829→   829→    setUser(null)
+   830→   830→  }
+   831→   831→
+   832→   832→  const roleBadge = {
+   833→   833→    STUDENT: 'bg-blue-100 text-blue-700 dark:bg-blue-950 dark:text-blue-300',
+   834→   834→    FACULTY: 'bg-purple-100 text-purple-700 dark:bg-purple-950 dark:text-purple-300',
+   835→   835→    STAFF: 'bg-amber-100 text-amber-700 dark:bg-amber-950 dark:text-amber-300',
+   836→   836→    ADMIN: 'bg-emerald-100 text-emerald-700 dark:bg-emerald-950 dark:text-emerald-300',
+   837→   837→  }[user.role]
+   838→   838→
+   839→   839→  const canSeeAdmin = user.role === 'ADMIN' || user.role === 'STAFF'
+   840→   840→
+   841→   841→  return (
+   842→   842→    <div className="min-h-screen flex flex-col bg-background">
+   843→   843→      {/* Header */}
+   844→   844→      <header className="border-b bg-background/95 backdrop-blur sticky top-0 z-10">
+   845→   845→        <div className="max-w-6xl mx-auto px-4 h-14 flex items-center justify-between">
+   846→   846→          <div className="flex items-center gap-2">
+   847→   847→            <div className="w-8 h-8 rounded-lg bg-gradient-to-br from-emerald-500 to-teal-600 text-white flex items-center justify-center">
+   848→   848→              <Bot className="w-4 h-4" />
+   849→   849→            </div>
+   850→   850→            <div>
+   851→   851→              <h1 className="font-semibold text-sm leading-tight">Labby</h1>
+   852→   852→              <p className="text-[10px] text-muted-foreground leading-tight">Campus Lab Booking Agent</p>
+   853→   853→            </div>
+   854→   854→          </div>
+   855→   855→          <div className="flex items-center gap-2">
+   856→   856→            <div className="flex items-center gap-2 px-2 py-1 rounded-md bg-muted/50">
+   857→   857→              <div className="w-7 h-7 rounded-full bg-slate-700 text-white flex items-center justify-center text-xs font-semibold">
+   858→   858→                {user.name.split(' ').map((s) => s[0]).slice(0, 2).join('')}
+   859→   859→              </div>
+   860→   860→              <div className="hidden sm:block text-xs">
+   861→   861→                <div className="font-medium leading-tight">{user.name}</div>
+   862→   862→                <div className="text-muted-foreground leading-tight">{user.email}</div>
+   863→   863→              </div>
+   864→   864→              <span className={`text-[10px] px-1.5 py-0.5 rounded-full font-medium ${roleBadge}`}>{user.role.toLowerCase()}</span>
+   865→   865→            </div>
+   866→   866→            <ThemeToggle />
+   867→   867→            <Button variant="ghost" size="icon" onClick={logout} title="Sign out">
+   868→   868→              <LogOut className="w-4 h-4" />
+   869→   869→            </Button>
+   870→   870→          </div>
+   871→   871→        </div>
+   872→   872→      </header>
+   873→   873→
+   874→   874→      {/* Tabs */}
+   875→   875→      <div className="border-b bg-background">
+   876→   876→        <div className="max-w-6xl mx-auto px-4">
+   877→   877→          <Tabs value={tab} onValueChange={setTab}>
+   878→   878→            <TabsList className="bg-transparent h-12 p-0 gap-4">
+   879→   879→              <TabsTrigger value="chat" className="bg-transparent shadow-none data-[state=active]:bg-transparent data-[state=active]:shadow-none rounded-none border-b-2 border-transparent data-[state=active]:border-emerald-600 data-[state=active]:text-emerald-700 dark:data-[state=active]:text-emerald-400 flex items-center gap-1.5">
+   880→   880→                <Bot className="w-4 h-4" /> Chat Assistant
+   881→   881→              </TabsTrigger>
+   882→   882→              <TabsTrigger value="calendar" className="bg-transparent shadow-none data-[state=active]:bg-transparent data-[state=active]:shadow-none rounded-none border-b-2 border-transparent data-[state=active]:border-emerald-600 data-[state=active]:text-emerald-700 dark:data-[state=active]:text-emerald-400 flex items-center gap-1.5">
+   883→   883→                <CalendarDays className="w-4 h-4" /> Calendar
+   884→   884→              </TabsTrigger>
+   885→   885→              <TabsTrigger value="bookings" className="bg-transparent shadow-none data-[state=active]:bg-transparent data-[state=active]:shadow-none rounded-none border-b-2 border-transparent data-[state=active]:border-emerald-600 data-[state=active]:text-emerald-700 dark:data-[state=active]:text-emerald-400 flex items-center gap-1.5">
+   886→   886→                <LayoutDashboard className="w-4 h-4" /> My Bookings
+   887→   887→              </TabsTrigger>
+   888→   888→              {canSeeAdmin && (
+   889→   889→                <TabsTrigger value="admin" className="bg-transparent shadow-none data-[state=active]:bg-transparent data-[state=active]:shadow-none rounded-none border-b-2 border-transparent data-[state=active]:border-emerald-600 data-[state=active]:text-emerald-700 dark:data-[state=active]:text-emerald-400 flex items-center gap-1.5">
+   890→   890→                  <Shield className="w-4 h-4" /> Admin
+   891→   891→                </TabsTrigger>
+   892→   892→              )}
+   893→   893→            </TabsList>
+   894→   894→
+   895→   895→            <TabsContent value="chat" className="mt-0 h-[calc(100vh-3.5rem-3rem)]">
+   896→   896→              <ChatPanel user={user} />
+   897→   897→            </TabsContent>
+   898→   898→            <TabsContent value="calendar" className="mt-0">
+   899→   899→              <CalendarPanel user={user} />
+   900→   900→            </TabsContent>
+   901→   901→            <TabsContent value="bookings" className="mt-0">
+   902→   902→              <MyBookingsPanel user={user} />
+   903→   903→            </TabsContent>
+   904→   904→            {canSeeAdmin && (
+   905→   905→              <TabsContent value="admin" className="mt-0">
+   906→   906→                <AdminPanel user={user} />
+   907→   907→              </TabsContent>
+   908→   908→            )}
+   909→   909→          </Tabs>
+   910→   910→        </div>
+   911→   911→      </div>
+   912→   912→
+   913→   913→      {/* Footer */}
+   914→   914→      <footer className="mt-auto border-t bg-background">
+   915→   915→        <div className="max-w-6xl mx-auto px-4 py-3 text-xs text-muted-foreground flex items-center justify-between">
+   916→   916→          <span>Labby · Campus Lab Booking Agent</span>
+   917→   917→          <span className="flex items-center gap-1"><CheckCircle2 className="w-3 h-3 text-emerald-500" /> All systems operational</span>
+   918→   918→        </div>
+   919→   919→      </footer>
+   920→   920→    </div>
+   921→   921→  )
+   922→   922→}
+   923→   923→
