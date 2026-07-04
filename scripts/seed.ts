@@ -17,27 +17,26 @@ async function main() {
   await db.user.deleteMany({})
   await db.lab.deleteMany({})
 
-  // Users — emailVerified set so they appear pre-verified
-  const now = new Date()
+  // Users
   const alice = await db.user.upsert({
     where: { email: 'alice@campus.edu' },
-    update: { name: 'Alice Chen', role: 'STUDENT', department: 'Computer Science' },
-    create: { name: 'Alice Chen', email: 'alice@campus.edu', role: 'STUDENT', department: 'Computer Science', emailVerified: now },
+    update: {},
+    create: { name: 'Alice Chen', email: 'alice@campus.edu', role: 'STUDENT', department: 'Computer Science' },
   })
   const bob = await db.user.upsert({
     where: { email: 'bob@campus.edu' },
-    update: { name: 'Bob Patel', role: 'FACULTY', department: 'Computer Science' },
-    create: { name: 'Bob Patel', email: 'bob@campus.edu', role: 'FACULTY', department: 'Computer Science', emailVerified: now },
+    update: {},
+    create: { name: 'Bob Patel', email: 'bob@campus.edu', role: 'FACULTY', department: 'Computer Science' },
   })
   const carol = await db.user.upsert({
     where: { email: 'carol@campus.edu' },
-    update: { name: 'Carol Reyes', role: 'STAFF', department: 'IT Services' },
-    create: { name: 'Carol Reyes', email: 'carol@campus.edu', role: 'STAFF', department: 'IT Services', emailVerified: now },
+    update: {},
+    create: { name: 'Carol Reyes', email: 'carol@campus.edu', role: 'STAFF', department: 'IT Services' },
   })
   const admin = await db.user.upsert({
     where: { email: 'admin@campus.edu' },
-    update: { name: 'Admin Wang', role: 'ADMIN', department: 'IT Services' },
-    create: { name: 'Admin Wang', email: 'admin@campus.edu', role: 'ADMIN', department: 'IT Services', emailVerified: now },
+    update: {},
+    create: { name: 'Admin Wang', email: 'admin@campus.edu', role: 'ADMIN', department: 'IT Services' },
   })
 
   // Labs
