@@ -1,11 +1,17 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { db } from '@/lib/db'
 import { canManageLabs, validateLab } from '@/lib/booking'
+import { getUserFromRequest } from '@/lib/auth'
 
 // PATCH /api/labs/[id] — update a lab (ADMIN or STAFF only)
-// Body: { userId, name?, location?, capacity?, openTime?, closeTime?, status?, description?, software? }
 export async function PATCH(req: NextRequest, { params }: { params: Promise<{ id: string }> }) {
   const { id } = await params
+
+  const user = await getUserFromRequest(req)
+  if (!user) return NextResponse.json({ error: 'Not authenticated' }, { status: 401 })
+  if (!canManageLabs(user.role)) {
+    return NextResponse.json({ error: 'Only admins and staff can update labs' }, { status: 403 })
+  }
 
   let body: any
   try {
@@ -14,19 +20,11 @@ export async function PATCH(req: NextRequest, { params }: { params: Promise<{ id
     return NextResponse.json({ error: 'Invalid JSON body' }, { status: 400 })
   }
 
-  const { userId, ...updates } = body
-  if (!userId) return NextResponse.json({ error: 'userId is required' }, { status: 400 })
-
-  const user = await db.user.findUnique({ where: { id: userId } })
-  if (!user) return NextResponse.json({ error: 'User not found' }, { status: 404 })
-  if (!canManageLabs(user.role)) {
-    return NextResponse.json({ error: 'Only admins and staff can update labs' }, { status: 403 })
-  }
+  const { userId: _drop, ...updates } = body // userId no longer used; auth comes from session
 
   const lab = await db.lab.findUnique({ where: { id } })
   if (!lab) return NextResponse.json({ error: 'Lab not found' }, { status: 404 })
 
-  // Validate only the fields being updated
   const v = validateLab(updates)
   if (!v.ok) return NextResponse.json({ error: v.error }, { status: 400 })
 
@@ -36,7 +34,6 @@ export async function PATCH(req: NextRequest, { params }: { params: Promise<{ id
     if (clash) return NextResponse.json({ error: `A lab named "${updates.name}" already exists.` }, { status: 409 })
   }
 
-  // Build clean update object — trim strings, convert capacity to number
   const data: any = {}
   if (updates.name !== undefined) data.name = updates.name.trim()
   if (updates.location !== undefined) data.location = updates.location.trim()
@@ -51,16 +48,12 @@ export async function PATCH(req: NextRequest, { params }: { params: Promise<{ id
   return NextResponse.json({ lab: updated })
 }
 
-// DELETE /api/labs/[id]?userId=... — delete a lab (ADMIN or STAFF only)
-// Note: this cascades and deletes all bookings for the lab. For safety, prefer PATCH status=CLOSED.
+// DELETE /api/labs/[id] — delete a lab (ADMIN or STAFF only)
 export async function DELETE(req: NextRequest, { params }: { params: Promise<{ id: string }> }) {
   const { id } = await params
-  const url = new URL(req.url)
-  const userId = url.searchParams.get('userId')
-  if (!userId) return NextResponse.json({ error: 'userId is required' }, { status: 400 })
 
-  const user = await db.user.findUnique({ where: { id: userId } })
-  if (!user) return NextResponse.json({ error: 'User not found' }, { status: 404 })
+  const user = await getUserFromRequest(req)
+  if (!user) return NextResponse.json({ error: 'Not authenticated' }, { status: 401 })
   if (!canManageLabs(user.role)) {
     return NextResponse.json({ error: 'Only admins and staff can delete labs' }, { status: 403 })
   }
@@ -68,7 +61,7 @@ export async function DELETE(req: NextRequest, { params }: { params: Promise<{ i
   const lab = await db.lab.findUnique({ where: { id } })
   if (!lab) return NextResponse.json({ error: 'Lab not found' }, { status: 404 })
 
-  // Block deletion if there are active bookings — require cancelling them first
+  // Block deletion if there are active bookings
   const activeBookings = await db.booking.count({
     where: { labId: id, status: { in: ['CONFIRMED', 'PENDING'] } },
   })
