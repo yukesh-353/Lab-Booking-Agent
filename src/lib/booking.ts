@@ -149,3 +149,6 @@ export const validateBooking = async (params: {
 // Role-based permissions
 export const canApproveBookings = (role: string) => role === 'ADMIN' || role === 'STAFF'
 export const canManageLabs = (role: string) => role === 'ADMIN'
+
+// Field length limit for the purpose field (defense against abuse)
+export const MAX_PURPOSE_LENGTH = 500
