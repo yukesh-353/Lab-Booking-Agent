@@ -15,6 +15,7 @@ import {
 } from 'lucide-react'
 import { useToast } from '@/hooks/use-toast'
 import { format } from 'date-fns'
+import { ThemeToggle } from '@/components/theme-toggle'
 
 // ---------- Types ----------
 interface User {
@@ -141,7 +142,10 @@ function LoginScreen({ onLogin }: { onLogin: (u: User) => void }) {
   }
 
   return (
-    <div className="min-h-screen flex flex-col items-center justify-center bg-gradient-to-br from-emerald-50 via-white to-teal-50 dark:from-slate-950 dark:via-slate-900 dark:to-emerald-950 p-4">
+    <div className="relative min-h-screen flex flex-col items-center justify-center bg-gradient-to-br from-emerald-50 via-white to-teal-50 dark:from-slate-950 dark:via-slate-900 dark:to-emerald-950 p-4">
+      <div className="absolute top-4 right-4">
+        <ThemeToggle />
+      </div>
       <div className="w-full max-w-md space-y-6">
         <div className="text-center space-y-2">
           <div className="inline-flex items-center justify-center w-16 h-16 rounded-2xl bg-gradient-to-br from-emerald-500 to-teal-600 text-white shadow-lg">
@@ -859,6 +863,7 @@ export default function Home() {
               </div>
               <span className={`text-[10px] px-1.5 py-0.5 rounded-full font-medium ${roleBadge}`}>{user.role.toLowerCase()}</span>
             </div>
+            <ThemeToggle />
             <Button variant="ghost" size="icon" onClick={logout} title="Sign out">
               <LogOut className="w-4 h-4" />
             </Button>
