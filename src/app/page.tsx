@@ -139,6 +139,16 @@ function timeToMinutesLocal(t: string): number {
   return h * 60 + m
 }
 
+// Auth-aware fetch wrapper: if any API call returns 401, dispatch a global event
+// that logs the user out and shows the login screen.
+async function apiFetch(url: string, options?: RequestInit): Promise<Response> {
+  const res = await fetch(url, options)
+  if (res.status === 401) {
+    window.dispatchEvent(new Event('labby-unauthorized'))
+  }
+  return res
+}
+
 // ---------- Login screen (secure login + register with captcha) ----------
 function LoginScreen({ onLogin }: { onLogin: (u: User) => void }) {
   const [mode, setMode] = useState<'login' | 'register'>('login')
@@ -454,7 +464,7 @@ function ChatPanel({ user }: { user: User }) {
     setInput('')
     setLoading(true)
     try {
-      const res = await fetch('/api/chat', {
+      const res = await apiFetch('/api/chat', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ message: trimmed, history }),
@@ -617,7 +627,7 @@ function CalendarPanel({ user }: { user: User }) {
     if (!selectedLab || !selectedDate) return
     setLoading(true)
     try {
-      const res = await fetch(`/api/labs/${selectedLab}/availability?date=${selectedDate}`)
+      const res = await apiFetch(`/api/labs/${selectedLab}/availability?date=${selectedDate}`)
       const data = await res.json()
       if (!res.ok) throw new Error(data.error)
       setSlots(data.slots || [])
@@ -755,7 +765,7 @@ function BookPanel({ user }: { user: User }) {
   // Re-fetch labs every 60s so live status updates as bookings start/end
   const loadLabs = useCallback(async () => {
     try {
-      const res = await fetch('/api/labs')
+      const res = await apiFetch('/api/labs')
       const data = await res.json()
       if (!res.ok) throw new Error(data.error)
       const openLabs = (data.labs || []).filter((l: Lab) => l.status === 'OPEN')
@@ -796,7 +806,7 @@ function BookPanel({ user }: { user: User }) {
     if (!selectedLabId || !selectedDate) return
     setLoading(true)
     try {
-      const res = await fetch(`/api/labs/${selectedLabId}/availability?date=${selectedDate}`)
+      const res = await apiFetch(`/api/labs/${selectedLabId}/availability?date=${selectedDate}`)
       const data = await res.json()
       if (!res.ok) throw new Error(data.error)
       setSlots(data.slots || [])
@@ -816,7 +826,7 @@ function BookPanel({ user }: { user: User }) {
     }
     setSubmitting(true)
     try {
-      const res = await fetch('/api/bookings', {
+      const res = await apiFetch('/api/bookings', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
@@ -981,7 +991,7 @@ function LabsPanel({ user }: { user: User }) {
   const load = useCallback(async () => {
     setLoading(true)
     try {
-      const res = await fetch('/api/labs')
+      const res = await apiFetch('/api/labs')
       const data = await res.json()
       if (!res.ok) throw new Error(data.error)
       setLabs(data.labs || [])
@@ -1000,7 +1010,7 @@ function LabsPanel({ user }: { user: User }) {
 
   const setLabStatus = async (lab: Lab, status: 'OPEN' | 'CLOSED' | 'MAINTENANCE') => {
     try {
-      const res = await fetch(`/api/labs/${lab.id}`, {
+      const res = await apiFetch(`/api/labs/${lab.id}`, {
         method: 'PATCH',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ status }),
@@ -1017,7 +1027,7 @@ function LabsPanel({ user }: { user: User }) {
   const deleteLab = async (lab: Lab) => {
     if (!confirm(`Delete ${lab.name}? This cannot be undone.`)) return
     try {
-      const res = await fetch(`/api/labs/${lab.id}`, { method: 'DELETE' })
+      const res = await apiFetch(`/api/labs/${lab.id}`, { method: 'DELETE' })
       const data = await res.json()
       if (!res.ok) throw new Error(data.error)
       toast({ title: 'Lab deleted', description: `${lab.name} has been removed.` })
@@ -1252,7 +1262,7 @@ function MyBookingsPanel({ user }: { user: User }) {
   const load = useCallback(async () => {
     setLoading(true)
     try {
-      const res = await fetch(`/api/bookings?scope=mine`)
+      const res = await apiFetch(`/api/bookings?scope=mine`)
       const data = await res.json()
       if (!res.ok) throw new Error(data.error)
       setBookings(data.bookings || [])
@@ -1269,7 +1279,7 @@ function MyBookingsPanel({ user }: { user: User }) {
 
   const cancel = async (id: string) => {
     try {
-      const res = await fetch(`/api/bookings/${id}`, { method: 'DELETE' })
+      const res = await apiFetch(`/api/bookings/${id}`, { method: 'DELETE' })
       const data = await res.json()
       if (!res.ok) throw new Error(data.error)
       toast({ title: 'Booking cancelled', description: 'The slot is now free for others.' })
@@ -1369,7 +1379,7 @@ function AdminPanel({ user }: { user: User }) {
   const loadStats = useCallback(async () => {
     setLoading(true)
     try {
-      const res = await fetch(`/api/admin/stats`)
+      const res = await apiFetch(`/api/admin/stats`)
       const data = await res.json()
       if (!res.ok) throw new Error(data.error)
       setStats(data)
@@ -1382,7 +1392,7 @@ function AdminPanel({ user }: { user: User }) {
 
   const loadAllBookings = useCallback(async () => {
     try {
-      const res = await fetch(`/api/bookings?scope=all&date=${allBookingsDate}`)
+      const res = await apiFetch(`/api/bookings?scope=all&date=${allBookingsDate}`)
       const data = await res.json()
       if (!res.ok) throw new Error(data.error)
       setAllBookings(data.bookings || [])
@@ -1545,48 +1555,43 @@ export default function Home() {
   const [tab, setTab] = useState('chat')
 
   useEffect(() => {
-    // Defer to next tick to avoid synchronous state update in effect body.
-    // Verify the session cookie is valid via /api/auth/me; fall back to localStorage
-    // (so the UI feels instant) but always trust the server response.
+    // Always verify the session with the server BEFORE showing the authenticated UI.
+    // This prevents the race condition where a stale localStorage cache shows the
+    // user as logged in, but the session cookie is invalid (e.g. after a DB reset)
+    // — which would cause 401 errors on every API call.
     const id = setTimeout(async () => {
-      const cached = loadUser()
-      if (cached) {
-        // Optimistically show the cached user, then verify with the server
-        setUser(cached)
-        setLoading(false)
-        try {
-          const res = await fetch('/api/auth/me')
-          if (res.ok) {
-            const data = await res.json()
-            if (data.user?.id !== cached.id) {
-              // Server session is for a different user (or stale cache) — update
-              saveUser(data.user)
-              setUser(data.user)
-            }
-          } else {
-            // Session expired/invalid — clear and show login
-            saveUser(null)
-            setUser(null)
-          }
-        } catch {
-          // Network error — keep the cached user (offline mode)
-        }
-      } else {
-        // No cached user — check if there's a valid session cookie
-        try {
-          const res = await fetch('/api/auth/me')
-          if (res.ok) {
-            const data = await res.json()
+      try {
+        const res = await fetch('/api/auth/me')
+        if (res.ok) {
+          const data = await res.json()
+          if (data.user) {
             saveUser(data.user)
             setUser(data.user)
           }
-        } catch {
-          // ignore
+        } else {
+          // Session invalid/expired — clear any stale cache
+          saveUser(null)
+          setUser(null)
         }
-        setLoading(false)
+      } catch {
+        // Network error — try the cached user as a fallback (offline mode)
+        const cached = loadUser()
+        if (cached) setUser(cached)
       }
+      setLoading(false)
     }, 0)
     return () => clearTimeout(id)
+  }, [])
+
+  // Global 401 handler: if any API call returns 401, log out and show login.
+  // This catches stale sessions that expire while the user is using the app.
+  useEffect(() => {
+    const handle401 = () => {
+      saveUser(null)
+      setUser(null)
+    }
+    window.addEventListener('labby-unauthorized', handle401)
+    return () => window.removeEventListener('labby-unauthorized', handle401)
   }, [])
 
   // Loading state — matches what the server renders, so no hydration mismatch
