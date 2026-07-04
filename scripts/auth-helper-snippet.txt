@@ -1,0 +1,17 @@
+// Helper: check if an error is an auth error (401) — these are handled globally
+// by the labby-unauthorized event, so individual catch blocks should skip
+// showing a toast for them.
+function isAuthError(e: any): boolean {
+  const msg = (e?.message || '').toLowerCase()
+  return msg.includes('not authenticated') || msg.includes('unauthorized')
+}
+
+// Auth-aware fetch wrapper: if any API call returns 401, dispatch a global event
+// that logs the user out and shows the login screen.
+async function apiFetch(url: string, options?: RequestInit): Promise<Response> {
+  const res = await fetch(url, options)
+  if (res.status === 401) {
+    window.dispatchEvent(new Event('labby-unauthorized'))
+  }
+  return res
+}

@@ -149,6 +149,14 @@ async function apiFetch(url: string, options?: RequestInit): Promise<Response> {
   return res
 }
 
+// Helper: check if an error is an auth error (401) — these are handled globally
+// by the labby-unauthorized event, so individual catch blocks should skip
+// showing a toast for them.
+function isAuthError(e: any): boolean {
+  const msg = (e?.message || '').toLowerCase()
+  return msg.includes('not authenticated') || msg.includes('unauthorized')
+}
+
 // ---------- Login screen (secure login + register with captcha) ----------
 function LoginScreen({ onLogin }: { onLogin: (u: User) => void }) {
   const [mode, setMode] = useState<'login' | 'register'>('login')
@@ -473,7 +481,7 @@ function ChatPanel({ user }: { user: User }) {
       if (!res.ok) throw new Error(data.error || 'Chat failed')
       setMessages((prev) => [...prev, { role: 'assistant', content: data.reply, ts: Date.now() }])
     } catch (e: any) {
-      toast({ title: 'Chat error', description: e.message, variant: 'destructive' })
+      if (!isAuthError(e)) toast({ title: 'Chat error', description: e.message, variant: 'destructive' })
       setMessages((prev) => [
         ...prev,
         { role: 'assistant', content: `Sorry, I hit an error: ${e.message}. Please try again.`, ts: Date.now() },
@@ -632,7 +640,7 @@ function CalendarPanel({ user }: { user: User }) {
       if (!res.ok) throw new Error(data.error)
       setSlots(data.slots || [])
     } catch (e: any) {
-      toast({ title: 'Failed to load schedule', description: e.message, variant: 'destructive' })
+      if (!isAuthError(e)) toast({ title: 'Failed to load schedule', description: e.message, variant: 'destructive' })
       setSlots([])
     } finally {
       setLoading(false)
@@ -772,7 +780,7 @@ function BookPanel({ user }: { user: User }) {
       setLabs(openLabs)
       setSelectedLabId((prev) => prev && openLabs.some((l: Lab) => l.id === prev) ? prev : (openLabs[0]?.id || ''))
     } catch (e: any) {
-      toast({ title: 'Failed to load labs', description: e.message, variant: 'destructive' })
+      if (!isAuthError(e)) toast({ title: 'Failed to load labs', description: e.message, variant: 'destructive' })
     }
   }, [toast])
 
@@ -849,7 +857,7 @@ function BookPanel({ user }: { user: User }) {
       setPurpose('')
       loadPreview()
     } catch (e: any) {
-      toast({ title: 'Booking failed', description: e.message, variant: 'destructive' })
+      if (!isAuthError(e)) toast({ title: 'Booking failed', description: e.message, variant: 'destructive' })
     } finally {
       setSubmitting(false)
     }
@@ -996,7 +1004,7 @@ function LabsPanel({ user }: { user: User }) {
       if (!res.ok) throw new Error(data.error)
       setLabs(data.labs || [])
     } catch (e: any) {
-      toast({ title: 'Failed to load labs', description: e.message, variant: 'destructive' })
+      if (!isAuthError(e)) toast({ title: 'Failed to load labs', description: e.message, variant: 'destructive' })
     } finally {
       setLoading(false)
     }
@@ -1020,7 +1028,7 @@ function LabsPanel({ user }: { user: User }) {
       toast({ title: 'Status updated', description: `${lab.name} is now ${status.toLowerCase()}.` })
       load()
     } catch (e: any) {
-      toast({ title: 'Failed to update', description: e.message, variant: 'destructive' })
+      if (!isAuthError(e)) toast({ title: 'Failed to update', description: e.message, variant: 'destructive' })
     }
   }
 
@@ -1033,7 +1041,7 @@ function LabsPanel({ user }: { user: User }) {
       toast({ title: 'Lab deleted', description: `${lab.name} has been removed.` })
       load()
     } catch (e: any) {
-      toast({ title: 'Failed to delete', description: e.message, variant: 'destructive' })
+      if (!isAuthError(e)) toast({ title: 'Failed to delete', description: e.message, variant: 'destructive' })
     }
   }
 
@@ -1175,7 +1183,7 @@ function LabEditor({ lab, onClose, onSaved }: { lab: Lab | null; onClose: () => 
       toast({ title: isEdit ? 'Lab updated' : 'Lab created', description: `${name} has been ${isEdit ? 'updated' : 'added'}.` })
       onSaved()
     } catch (e: any) {
-      toast({ title: 'Save failed', description: e.message, variant: 'destructive' })
+      if (!isAuthError(e)) toast({ title: 'Save failed', description: e.message, variant: 'destructive' })
     } finally {
       setSaving(false)
     }
@@ -1267,7 +1275,7 @@ function MyBookingsPanel({ user }: { user: User }) {
       if (!res.ok) throw new Error(data.error)
       setBookings(data.bookings || [])
     } catch (e: any) {
-      toast({ title: 'Failed to load bookings', description: e.message, variant: 'destructive' })
+      if (!isAuthError(e)) toast({ title: 'Failed to load bookings', description: e.message, variant: 'destructive' })
     } finally {
       setLoading(false)
     }
@@ -1285,7 +1293,7 @@ function MyBookingsPanel({ user }: { user: User }) {
       toast({ title: 'Booking cancelled', description: 'The slot is now free for others.' })
       load()
     } catch (e: any) {
-      toast({ title: 'Failed to cancel', description: e.message, variant: 'destructive' })
+      if (!isAuthError(e)) toast({ title: 'Failed to cancel', description: e.message, variant: 'destructive' })
     }
   }
 
@@ -1384,7 +1392,7 @@ function AdminPanel({ user }: { user: User }) {
       if (!res.ok) throw new Error(data.error)
       setStats(data)
     } catch (e: any) {
-      toast({ title: 'Failed to load admin stats', description: e.message, variant: 'destructive' })
+      if (!isAuthError(e)) toast({ title: 'Failed to load admin stats', description: e.message, variant: 'destructive' })
     } finally {
       setLoading(false)
     }
@@ -1397,7 +1405,7 @@ function AdminPanel({ user }: { user: User }) {
       if (!res.ok) throw new Error(data.error)
       setAllBookings(data.bookings || [])
     } catch (e: any) {
-      toast({ title: 'Failed to load bookings', description: e.message, variant: 'destructive' })
+      if (!isAuthError(e)) toast({ title: 'Failed to load bookings', description: e.message, variant: 'destructive' })
     }
   }, [allBookingsDate, toast])
 
