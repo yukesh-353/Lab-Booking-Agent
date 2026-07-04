@@ -10,8 +10,13 @@ import { Badge } from '@/components/ui/badge'
 import { ScrollArea } from '@/components/ui/scroll-area'
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select'
 import {
+  Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle, DialogTrigger,
+} from '@/components/ui/dialog'
+import { Textarea } from '@/components/ui/textarea'
+import {
   Bot, Send, Calendar as CalendarIcon, LayoutDashboard, Shield, LogOut, Loader2, User,
   Clock, MapPin, Users, Monitor, CheckCircle2, XCircle, CalendarDays, Sparkles, History,
+  Plus, Pencil, FlaskConical, Trash2,
 } from 'lucide-react'
 import { useToast } from '@/hooks/use-toast'
 import { format } from 'date-fns'
@@ -512,6 +517,481 @@ function CalendarPanel({ user }: { user: User }) {
   )
 }
 
+// ---------- Book Panel (manual booking form with time pickers) ----------
+function BookPanel({ user }: { user: User }) {
+  const [labs, setLabs] = useState<Lab[]>([])
+  const [selectedLabId, setSelectedLabId] = useState('')
+  const [selectedDate, setSelectedDate] = useState(new Date().toLocaleDateString('sv-SE'))
+  const [startTime, setStartTime] = useState('')
+  const [endTime, setEndTime] = useState('')
+  const [purpose, setPurpose] = useState('')
+  const [loading, setLoading] = useState(false)
+  const [submitting, setSubmitting] = useState(false)
+  const [slots, setSlots] = useState<Slot[]>([])
+  const { toast } = useToast()
+
+  const todayStr = new Date().toLocaleDateString('sv-SE')
+
+  useEffect(() => {
+    fetch('/api/labs')
+      .then((r) => r.json())
+      .then((d) => {
+        const openLabs = (d.labs || []).filter((l: Lab) => l.status === 'OPEN')
+        setLabs(openLabs)
+        if (openLabs.length) setSelectedLabId(openLabs[0].id)
+      })
+      .catch((e: any) => toast({ title: 'Failed to load labs', description: e.message, variant: 'destructive' }))
+  }, [toast])
+
+  const selectedLab = labs.find((l) => l.id === selectedLabId)
+
+  // Generate time options in 30-min increments within the lab's open hours
+  const timeOptions: string[] = (() => {
+    if (!selectedLab) return []
+    const [oh, om] = selectedLab.openTime.split(':').map(Number)
+    const [ch, cm] = selectedLab.closeTime.split(':').map(Number)
+    const openM = oh * 60 + om
+    const closeM = ch * 60 + cm
+    const opts: string[] = []
+    for (let m = openM; m <= closeM; m += 30) {
+      opts.push(`${String(Math.floor(m / 60)).padStart(2, '0')}:${String(m % 60).padStart(2, '0')}`)
+    }
+    return opts
+  })()
+
+  // Filter end-time options to be after the selected start time
+  const endTimeOptions = startTime ? timeOptions.filter((t) => t > startTime) : timeOptions
+
+  // Load availability preview for the selected lab + date
+  const loadPreview = useCallback(async () => {
+    if (!selectedLabId || !selectedDate) return
+    setLoading(true)
+    try {
+      const res = await fetch(`/api/labs/${selectedLabId}/availability?date=${selectedDate}`)
+      const data = await res.json()
+      if (!res.ok) throw new Error(data.error)
+      setSlots(data.slots || [])
+    } catch {
+      setSlots([])
+    } finally {
+      setLoading(false)
+    }
+  }, [selectedLabId, selectedDate])
+
+  useEffect(() => { loadPreview() }, [loadPreview])
+
+  const submit = async () => {
+    if (!selectedLabId || !selectedDate || !startTime || !endTime) {
+      toast({ title: 'Please fill in all fields', description: 'Lab, date, start time, and end time are required.', variant: 'destructive' })
+      return
+    }
+    setSubmitting(true)
+    try {
+      const res = await fetch('/api/bookings', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          userId: user.id,
+          labId: selectedLabId,
+          date: selectedDate,
+          startTime,
+          endTime,
+          purpose: purpose.trim() || undefined,
+        }),
+      })
+      const data = await res.json()
+      if (!res.ok) throw new Error(data.error || 'Booking failed')
+      toast({
+        title: 'Booking confirmed',
+        description: `${selectedLab?.name} on ${format(new Date(selectedDate + 'T00:00:00'), 'EEE, MMM d')} · ${startTime}–${endTime}`,
+      })
+      // Reset time + purpose, refresh preview
+      setStartTime('')
+      setEndTime('')
+      setPurpose('')
+      loadPreview()
+    } catch (e: any) {
+      toast({ title: 'Booking failed', description: e.message, variant: 'destructive' })
+    } finally {
+      setSubmitting(false)
+    }
+  }
+
+  return (
+    <div className="space-y-4 p-4 max-w-3xl mx-auto">
+      <Card>
+        <CardHeader>
+          <CardTitle className="flex items-center gap-2"><CalendarDays className="w-5 h-5 text-emerald-600" /> Book a lab</CardTitle>
+          <CardDescription>Pick a lab, date, and time slot. Conflicts are checked automatically.</CardDescription>
+        </CardHeader>
+        <CardContent className="space-y-4">
+          {/* Lab select */}
+          <div className="space-y-1.5">
+            <Label htmlFor="book-lab">Lab</Label>
+            <Select value={selectedLabId} onValueChange={setSelectedLabId}>
+              <SelectTrigger><SelectValue placeholder="Select a lab" /></SelectTrigger>
+              <SelectContent>
+                {labs.map((l) => (
+                  <SelectItem key={l.id} value={l.id}>{l.name}</SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
+          </div>
+
+          {selectedLab && (
+            <div className="rounded-lg border bg-muted/30 p-3 text-xs text-muted-foreground">
+              <div className="grid grid-cols-2 sm:grid-cols-4 gap-2">
+                <span className="flex items-center gap-1"><MapPin className="w-3 h-3" /> {selectedLab.location}</span>
+                <span className="flex items-center gap-1"><Users className="w-3 h-3" /> {selectedLab.capacity} seats</span>
+                <span className="flex items-center gap-1"><Clock className="w-3 h-3" /> {selectedLab.openTime}–{selectedLab.closeTime}</span>
+                <span className="flex items-center gap-1"><Monitor className="w-3 h-3" /> {selectedLab.software?.split(',')[0] || 'Standard'}</span>
+              </div>
+            </div>
+          )}
+
+          {/* Date */}
+          <div className="space-y-1.5">
+            <Label htmlFor="book-date">Date</Label>
+            <Input id="book-date" type="date" min={todayStr} value={selectedDate} onChange={(e) => setSelectedDate(e.target.value)} />
+          </div>
+
+          {/* Time pickers */}
+          <div className="grid grid-cols-2 gap-3">
+            <div className="space-y-1.5">
+              <Label htmlFor="book-start">Start time</Label>
+              <Select value={startTime} onValueChange={(v) => { setStartTime(v); setEndTime('') }}>
+                <SelectTrigger><SelectValue placeholder="— select —" /></SelectTrigger>
+                <SelectContent className="max-h-72">
+                  {timeOptions.map((t) => (
+                    <SelectItem key={t} value={t}>{t}</SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+            </div>
+            <div className="space-y-1.5">
+              <Label htmlFor="book-end">End time</Label>
+              <Select value={endTime} onValueChange={setEndTime} disabled={!startTime}>
+                <SelectTrigger><SelectValue placeholder={startTime ? '— select —' : 'Pick start first'} /></SelectTrigger>
+                <SelectContent className="max-h-72">
+                  {endTimeOptions.map((t) => (
+                    <SelectItem key={t} value={t}>{t}</SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+            </div>
+          </div>
+
+          {/* Purpose */}
+          <div className="space-y-1.5">
+            <Label htmlFor="book-purpose">Purpose (optional)</Label>
+            <Input id="book-purpose" value={purpose} onChange={(e) => setPurpose(e.target.value)} maxLength={500} placeholder="e.g. ML project work" />
+            <p className="text-[10px] text-muted-foreground">{purpose.length}/500 characters</p>
+          </div>
+
+          {/* Availability preview */}
+          {selectedLab && (
+            <div className="rounded-md border p-3 space-y-2">
+              <div className="flex items-center justify-between text-sm">
+                <span className="font-medium">Availability on {format(new Date(selectedDate + 'T00:00:00'), 'EEE, MMM d')}</span>
+                {loading && <Loader2 className="w-3.5 h-3.5 animate-spin" />}
+              </div>
+              <div className="flex flex-wrap gap-1.5">
+                {slots.length === 0 && !loading && <span className="text-xs text-muted-foreground">No data.</span>}
+                {slots.map((s, i) => (
+                  <Badge key={i} variant={s.booked ? 'destructive' : 'default'} className={`text-[10px] font-mono ${s.booked ? '' : 'bg-emerald-600 hover:bg-emerald-700'}`}>
+                    {s.start}–{s.end}
+                  </Badge>
+                ))}
+              </div>
+            </div>
+          )}
+
+          <Button onClick={submit} disabled={submitting || !selectedLabId || !startTime || !endTime} className="w-full bg-emerald-600 hover:bg-emerald-700 text-white">
+            {submitting ? <Loader2 className="w-4 h-4 mr-2 animate-spin" /> : <CheckCircle2 className="w-4 h-4 mr-2" />}
+            Confirm booking
+          </Button>
+        </CardContent>
+      </Card>
+    </div>
+  )
+}
+
+// ---------- Labs Management Panel (admin/staff only) ----------
+function LabsPanel({ user }: { user: User }) {
+  const [labs, setLabs] = useState<Lab[]>([])
+  const [loading, setLoading] = useState(true)
+  const [editing, setEditing] = useState<Lab | null>(null)
+  const [creating, setCreating] = useState(false)
+  const { toast } = useToast()
+
+  const load = useCallback(async () => {
+    setLoading(true)
+    try {
+      const res = await fetch('/api/labs')
+      const data = await res.json()
+      if (!res.ok) throw new Error(data.error)
+      setLabs(data.labs || [])
+    } catch (e: any) {
+      toast({ title: 'Failed to load labs', description: e.message, variant: 'destructive' })
+    } finally {
+      setLoading(false)
+    }
+  }, [toast])
+
+  useEffect(() => { load() }, [load])
+
+  const setLabStatus = async (lab: Lab, status: 'OPEN' | 'CLOSED' | 'MAINTENANCE') => {
+    try {
+      const res = await fetch(`/api/labs/${lab.id}`, {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ userId: user.id, status }),
+      })
+      const data = await res.json()
+      if (!res.ok) throw new Error(data.error)
+      toast({ title: 'Status updated', description: `${lab.name} is now ${status.toLowerCase()}.` })
+      load()
+    } catch (e: any) {
+      toast({ title: 'Failed to update', description: e.message, variant: 'destructive' })
+    }
+  }
+
+  const deleteLab = async (lab: Lab) => {
+    if (!confirm(`Delete ${lab.name}? This cannot be undone.`)) return
+    try {
+      const res = await fetch(`/api/labs/${lab.id}?userId=${user.id}`, { method: 'DELETE' })
+      const data = await res.json()
+      if (!res.ok) throw new Error(data.error)
+      toast({ title: 'Lab deleted', description: `${lab.name} has been removed.` })
+      load()
+    } catch (e: any) {
+      toast({ title: 'Failed to delete', description: e.message, variant: 'destructive' })
+    }
+  }
+
+  if (user.role !== 'ADMIN' && user.role !== 'STAFF') {
+    return (
+      <div className="p-4 max-w-5xl mx-auto">
+        <Card>
+          <CardContent className="py-12 text-center">
+            <Shield className="w-10 h-10 mx-auto mb-3 text-muted-foreground/50" />
+            <p className="text-muted-foreground">Admin or staff access required.</p>
+            <p className="text-sm text-muted-foreground mt-1">Only STAFF and ADMIN roles can manage labs.</p>
+          </CardContent>
+        </Card>
+      </div>
+    )
+  }
+
+  const statusBadge = (s: string) => {
+    const cls: Record<string, string> = {
+      OPEN: 'bg-emerald-600 hover:bg-emerald-700',
+      CLOSED: 'bg-slate-500 hover:bg-slate-600',
+      MAINTENANCE: 'bg-amber-500 hover:bg-amber-600',
+    }
+    return <Badge variant="default" className={`text-xs ${cls[s] || ''}`}>{s.toLowerCase()}</Badge>
+  }
+
+  return (
+    <div className="space-y-4 p-4 max-w-5xl mx-auto">
+      <Card>
+        <CardHeader>
+          <div className="flex items-center justify-between">
+            <div>
+              <CardTitle className="flex items-center gap-2"><FlaskConical className="w-5 h-5 text-emerald-600" /> Manage labs</CardTitle>
+              <CardDescription>Create, edit, and control the status of campus computer labs.</CardDescription>
+            </div>
+            <Button onClick={() => setCreating(true)} className="bg-emerald-600 hover:bg-emerald-700 text-white">
+              <Plus className="w-4 h-4 mr-1" /> Add lab
+            </Button>
+          </div>
+        </CardHeader>
+        <CardContent>
+          {loading ? (
+            <div className="flex items-center justify-center py-8"><Loader2 className="w-6 h-6 animate-spin text-muted-foreground" /></div>
+          ) : labs.length === 0 ? (
+            <p className="text-sm text-muted-foreground text-center py-8">No labs yet. Click "Add lab" to create the first one.</p>
+          ) : (
+            <div className="space-y-2">
+              {labs.map((lab) => (
+                <div key={lab.id} className="flex items-center justify-between rounded-lg border p-3 gap-3">
+                  <div className="flex-1 min-w-0">
+                    <div className="flex items-center gap-2 flex-wrap">
+                      <span className="font-medium text-sm truncate">{lab.name}</span>
+                      {statusBadge(lab.status)}
+                    </div>
+                    <div className="text-xs text-muted-foreground mt-1 flex items-center gap-3 flex-wrap">
+                      <span className="flex items-center gap-1"><MapPin className="w-3 h-3" /> {lab.location}</span>
+                      <span className="flex items-center gap-1"><Users className="w-3 h-3" /> {lab.capacity}</span>
+                      <span className="flex items-center gap-1"><Clock className="w-3 h-3" /> {lab.openTime}–{lab.closeTime}</span>
+                    </div>
+                    {lab.software && <div className="text-[11px] text-muted-foreground mt-0.5 truncate">Software: {lab.software}</div>}
+                  </div>
+                  <div className="flex items-center gap-1 shrink-0">
+                    {/* Quick status toggle */}
+                    <Select value={lab.status} onValueChange={(v) => setLabStatus(lab, v as any)}>
+                      <SelectTrigger className="h-8 w-32 text-xs"><SelectValue /></SelectTrigger>
+                      <SelectContent>
+                        <SelectItem value="OPEN">Open</SelectItem>
+                        <SelectItem value="CLOSED">Closed</SelectItem>
+                        <SelectItem value="MAINTENANCE">Maintenance</SelectItem>
+                      </SelectContent>
+                    </Select>
+                    <Button variant="ghost" size="icon" className="h-8 w-8" onClick={() => setEditing(lab)} title="Edit">
+                      <Pencil className="w-3.5 h-3.5" />
+                    </Button>
+                    <Button variant="ghost" size="icon" className="h-8 w-8 text-red-600 hover:text-red-700 hover:bg-red-50 dark:hover:bg-red-950/30" onClick={() => deleteLab(lab)} title="Delete">
+                      <Trash2 className="w-3.5 h-3.5" />
+                    </Button>
+                  </div>
+                </div>
+              ))}
+            </div>
+          )}
+        </CardContent>
+      </Card>
+
+      {(creating || editing) && (
+        <LabEditor
+          lab={editing}
+          userId={user.id}
+          onClose={() => { setCreating(false); setEditing(null) }}
+          onSaved={() => { setCreating(false); setEditing(null); load() }}
+        />
+      )}
+    </div>
+  )
+}
+
+// ---------- Lab Editor (create/edit dialog) ----------
+function LabEditor({ lab, userId, onClose, onSaved }: { lab: Lab | null; userId: string; onClose: () => void; onSaved: () => void }) {
+  const isEdit = !!lab
+  const [name, setName] = useState(lab?.name || '')
+  const [location, setLocation] = useState(lab?.location || '')
+  const [capacity, setCapacity] = useState(lab?.capacity?.toString() || '30')
+  const [openTime, setOpenTime] = useState(lab?.openTime || '08:00')
+  const [closeTime, setCloseTime] = useState(lab?.closeTime || '22:00')
+  const [status, setStatus] = useState<'OPEN' | 'CLOSED' | 'MAINTENANCE'>(lab?.status || 'OPEN')
+  const [description, setDescription] = useState(lab?.description || '')
+  const [software, setSoftware] = useState(lab?.software || '')
+  const [saving, setSaving] = useState(false)
+  const { toast } = useToast()
+
+  // Time options for open/close (every 30 min from 00:00 to 23:30)
+  const allTimeOptions: string[] = (() => {
+    const opts: string[] = []
+    for (let m = 0; m < 24 * 60; m += 30) opts.push(`${String(Math.floor(m / 60)).padStart(2, '0')}:${String(m % 60).padStart(2, '0')}`)
+    return opts
+  })()
+
+  const save = async () => {
+    if (!name.trim() || !location.trim() || !capacity || !openTime || !closeTime) {
+      toast({ title: 'Please fill in all required fields', variant: 'destructive' })
+      return
+    }
+    setSaving(true)
+    try {
+      const payload: any = {
+        userId,
+        name: name.trim(),
+        location: location.trim(),
+        capacity: Number(capacity),
+        openTime,
+        closeTime,
+        status,
+        description: description.trim() || null,
+        software: software.trim() || null,
+      }
+      const url = isEdit ? `/api/labs/${lab!.id}` : '/api/labs'
+      const method = isEdit ? 'PATCH' : 'POST'
+      const res = await fetch(url, {
+        method,
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(payload),
+      })
+      const data = await res.json()
+      if (!res.ok) throw new Error(data.error || 'Save failed')
+      toast({ title: isEdit ? 'Lab updated' : 'Lab created', description: `${name} has been ${isEdit ? 'updated' : 'added'}.` })
+      onSaved()
+    } catch (e: any) {
+      toast({ title: 'Save failed', description: e.message, variant: 'destructive' })
+    } finally {
+      setSaving(false)
+    }
+  }
+
+  return (
+    <Dialog open onOpenChange={(o) => { if (!o) onClose() }}>
+      <DialogContent className="max-w-lg max-h-[90vh] overflow-y-auto">
+        <DialogHeader>
+          <DialogTitle>{isEdit ? 'Edit lab' : 'Add new lab'}</DialogTitle>
+          <DialogDescription>
+            {isEdit ? `Update details for ${lab!.name}.` : 'Create a new computer lab. Only admins and staff can do this.'}
+          </DialogDescription>
+        </DialogHeader>
+        <div className="space-y-3 py-2">
+          <div className="space-y-1.5">
+            <Label htmlFor="lab-name">Name *</Label>
+            <Input id="lab-name" value={name} onChange={(e) => setName(e.target.value)} maxLength={100} placeholder="e.g. Lab E — Engineering 305" />
+          </div>
+          <div className="space-y-1.5">
+            <Label htmlFor="lab-location">Location *</Label>
+            <Input id="lab-location" value={location} onChange={(e) => setLocation(e.target.value)} maxLength={200} placeholder="Building, room" />
+          </div>
+          <div className="grid grid-cols-2 gap-3">
+            <div className="space-y-1.5">
+              <Label htmlFor="lab-capacity">Capacity *</Label>
+              <Input id="lab-capacity" type="number" min="1" max="1000" value={capacity} onChange={(e) => setCapacity(e.target.value)} />
+            </div>
+            <div className="space-y-1.5">
+              <Label htmlFor="lab-status">Status</Label>
+              <Select value={status} onValueChange={(v) => setStatus(v as any)}>
+                <SelectTrigger><SelectValue /></SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="OPEN">Open</SelectItem>
+                  <SelectItem value="CLOSED">Closed</SelectItem>
+                  <SelectItem value="MAINTENANCE">Maintenance</SelectItem>
+                </SelectContent>
+              </Select>
+            </div>
+          </div>
+          <div className="grid grid-cols-2 gap-3">
+            <div className="space-y-1.5">
+              <Label htmlFor="lab-open">Open time *</Label>
+              <Select value={openTime} onValueChange={setOpenTime}>
+                <SelectTrigger><SelectValue /></SelectTrigger>
+                <SelectContent className="max-h-60">{allTimeOptions.map((t) => <SelectItem key={t} value={t}>{t}</SelectItem>)}</SelectContent>
+              </Select>
+            </div>
+            <div className="space-y-1.5">
+              <Label htmlFor="lab-close">Close time *</Label>
+              <Select value={closeTime} onValueChange={setCloseTime}>
+                <SelectTrigger><SelectValue /></SelectTrigger>
+                <SelectContent className="max-h-60">{allTimeOptions.map((t) => <SelectItem key={t} value={t}>{t}</SelectItem>)}</SelectContent>
+              </Select>
+            </div>
+          </div>
+          <div className="space-y-1.5">
+            <Label htmlFor="lab-desc">Description</Label>
+            <Textarea id="lab-desc" value={description} onChange={(e) => setDescription(e.target.value)} maxLength={1000} rows={2} placeholder="Short description of the lab" />
+          </div>
+          <div className="space-y-1.5">
+            <Label htmlFor="lab-software">Software (comma-separated)</Label>
+            <Input id="lab-software" value={software} onChange={(e) => setSoftware(e.target.value)} maxLength={500} placeholder="e.g. Python, MATLAB, Git" />
+          </div>
+        </div>
+        <DialogFooter>
+          <Button variant="outline" onClick={onClose} disabled={saving}>Cancel</Button>
+          <Button onClick={save} disabled={saving} className="bg-emerald-600 hover:bg-emerald-700 text-white">
+            {saving ? <Loader2 className="w-4 h-4 mr-2 animate-spin" /> : null}
+            {isEdit ? 'Save changes' : 'Create lab'}
+          </Button>
+        </DialogFooter>
+      </DialogContent>
+    </Dialog>
+  )
+}
+
 // ---------- My Bookings Panel ----------
 function MyBookingsPanel({ user }: { user: User }) {
   const [bookings, setBookings] = useState<Booking[]>([])
@@ -837,6 +1317,7 @@ export default function Home() {
   }[user.role]
 
   const canSeeAdmin = user.role === 'ADMIN' || user.role === 'STAFF'
+  const canSeeLabs = user.role === 'ADMIN' || user.role === 'STAFF'
 
   return (
     <div className="min-h-screen flex flex-col bg-background">
@@ -875,16 +1356,24 @@ export default function Home() {
       <div className="border-b bg-background">
         <div className="max-w-6xl mx-auto px-4">
           <Tabs value={tab} onValueChange={setTab}>
-            <TabsList className="bg-transparent h-12 p-0 gap-4">
+            <TabsList className="bg-transparent h-12 p-0 gap-4 overflow-x-auto">
               <TabsTrigger value="chat" className="bg-transparent shadow-none data-[state=active]:bg-transparent data-[state=active]:shadow-none rounded-none border-b-2 border-transparent data-[state=active]:border-emerald-600 data-[state=active]:text-emerald-700 dark:data-[state=active]:text-emerald-400 flex items-center gap-1.5">
-                <Bot className="w-4 h-4" /> Chat Assistant
+                <Bot className="w-4 h-4" /> Chat
+              </TabsTrigger>
+              <TabsTrigger value="book" className="bg-transparent shadow-none data-[state=active]:bg-transparent data-[state=active]:shadow-none rounded-none border-b-2 border-transparent data-[state=active]:border-emerald-600 data-[state=active]:text-emerald-700 dark:data-[state=active]:text-emerald-400 flex items-center gap-1.5">
+                <CalendarDays className="w-4 h-4" /> Book
               </TabsTrigger>
               <TabsTrigger value="calendar" className="bg-transparent shadow-none data-[state=active]:bg-transparent data-[state=active]:shadow-none rounded-none border-b-2 border-transparent data-[state=active]:border-emerald-600 data-[state=active]:text-emerald-700 dark:data-[state=active]:text-emerald-400 flex items-center gap-1.5">
-                <CalendarDays className="w-4 h-4" /> Calendar
+                <CalendarIcon className="w-4 h-4" /> Availability
               </TabsTrigger>
               <TabsTrigger value="bookings" className="bg-transparent shadow-none data-[state=active]:bg-transparent data-[state=active]:shadow-none rounded-none border-b-2 border-transparent data-[state=active]:border-emerald-600 data-[state=active]:text-emerald-700 dark:data-[state=active]:text-emerald-400 flex items-center gap-1.5">
                 <LayoutDashboard className="w-4 h-4" /> My Bookings
               </TabsTrigger>
+              {canSeeLabs && (
+                <TabsTrigger value="labs" className="bg-transparent shadow-none data-[state=active]:bg-transparent data-[state=active]:shadow-none rounded-none border-b-2 border-transparent data-[state=active]:border-emerald-600 data-[state=active]:text-emerald-700 dark:data-[state=active]:text-emerald-400 flex items-center gap-1.5">
+                  <FlaskConical className="w-4 h-4" /> Labs
+                </TabsTrigger>
+              )}
               {canSeeAdmin && (
                 <TabsTrigger value="admin" className="bg-transparent shadow-none data-[state=active]:bg-transparent data-[state=active]:shadow-none rounded-none border-b-2 border-transparent data-[state=active]:border-emerald-600 data-[state=active]:text-emerald-700 dark:data-[state=active]:text-emerald-400 flex items-center gap-1.5">
                   <Shield className="w-4 h-4" /> Admin
@@ -895,12 +1384,20 @@ export default function Home() {
             <TabsContent value="chat" className="mt-0 h-[calc(100vh-3.5rem-3rem)]">
               <ChatPanel user={user} />
             </TabsContent>
+            <TabsContent value="book" className="mt-0">
+              <BookPanel user={user} />
+            </TabsContent>
             <TabsContent value="calendar" className="mt-0">
               <CalendarPanel user={user} />
             </TabsContent>
             <TabsContent value="bookings" className="mt-0">
               <MyBookingsPanel user={user} />
             </TabsContent>
+            {canSeeLabs && (
+              <TabsContent value="labs" className="mt-0">
+                <LabsPanel user={user} />
+              </TabsContent>
+            )}
             {canSeeAdmin && (
               <TabsContent value="admin" className="mt-0">
                 <AdminPanel user={user} />

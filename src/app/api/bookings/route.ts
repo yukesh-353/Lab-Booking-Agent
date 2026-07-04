@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { db } from '@/lib/db'
-import { validateBooking } from '@/lib/booking'
+import { validateBooking, MAX_PURPOSE_LENGTH } from '@/lib/booking'
 
 // GET /api/bookings?userId=...&scope=all|mine&date=YYYY-MM-DD
 export async function GET(req: NextRequest) {
@@ -26,6 +26,7 @@ export async function GET(req: NextRequest) {
     if (date) where.date = date
   } else {
     where.userId = userId
+    if (date) where.date = date
   }
 
   const bookings = await db.booking.findMany({
@@ -38,7 +39,13 @@ export async function GET(req: NextRequest) {
 
 // POST /api/bookings — create a new booking
 export async function POST(req: NextRequest) {
-  const body = await req.json()
+  let body: any
+  try {
+    body = await req.json()
+  } catch {
+    return NextResponse.json({ error: 'Invalid JSON body' }, { status: 400 })
+  }
+
   const { userId, labId, date, startTime, endTime, purpose } = body
 
   if (!userId) {
@@ -48,6 +55,9 @@ export async function POST(req: NextRequest) {
   if (!user) {
     return NextResponse.json({ error: 'User not found' }, { status: 404 })
   }
+
+  // Truncate purpose to max length
+  const cleanPurpose = (typeof purpose === 'string' ? purpose.slice(0, MAX_PURPOSE_LENGTH) : 'General use')
 
   const validation = await validateBooking({ labId, date, startTime, endTime, userId })
   if (!validation.ok) {
@@ -61,7 +71,7 @@ export async function POST(req: NextRequest) {
       date,
       startTime,
       endTime,
-      purpose: purpose || 'General use',
+      purpose: cleanPurpose,
       status: 'CONFIRMED',
     },
     include: { lab: true },

@@ -5,11 +5,14 @@ import ZAI from 'z-ai-web-dev-sdk'
 import { db } from './db'
 import {
   validateBooking,
+  validateLab,
   todayISO,
   addDays,
   formatDate,
   getLabSchedule,
   canApproveBookings,
+  canManageLabs,
+  MAX_PURPOSE_LENGTH,
 } from './booking'
 
 export type ChatRole = 'user' | 'assistant' | 'system'
@@ -37,6 +40,15 @@ interface AgentAction {
   end?: string
   purpose?: string
   bookingId?: string
+  // Lab management fields
+  name?: string
+  location?: string
+  capacity?: number
+  openTime?: string
+  closeTime?: string
+  status?: string
+  description?: string
+  software?: string
 }
 
 interface AgentContext {
@@ -48,8 +60,9 @@ interface AgentContext {
 async function buildSystemPrompt(ctx: AgentContext): Promise<string> {
   const labs = await db.lab.findMany({ orderBy: { name: 'asc' } })
   const now = new Date()
-  const todayStr = now.toISOString().slice(0, 10)
+  const todayStr = todayISO()
   const weekday = now.toLocaleDateString('en-US', { weekday: 'long' })
+  const currentTime = now.toLocaleTimeString('en-GB', { hour: '2-digit', minute: '2-digit', hour12: false })
 
   const labList = labs
     .map((l) => {
@@ -61,7 +74,7 @@ async function buildSystemPrompt(ctx: AgentContext): Promise<string> {
 
 CURRENT CONTEXT
 - Today's date: ${todayStr} (${weekday})
-- Current time: ${now.toTimeString().slice(0, 5)}
+- Current time: ${currentTime} (local)
 - Logged-in user: ${ctx.user.name} (${ctx.user.role}${ctx.user.department ? ', ' + ctx.user.department : ''})
 
 AVAILABLE LABS
@@ -71,10 +84,12 @@ WHAT YOU CAN DO
 You help users with these tasks:
 1. List available labs and their info (hours, capacity, software, status).
 2. Check free/busy time slots for a specific lab on a specific date.
-3. Create a booking for the current user (you receive a request like "book Lab A tomorrow 2-4pm").
+3. Create a booking for the current user (you receive a request like "book Lab A tomorrow 2-4pm"). The user can specify start and end times in 24h format (e.g. "14:00") or 12h format (e.g. "2pm" → "14:00").
 4. List the current user's upcoming bookings.
 5. Cancel one of the user's bookings by ID (always confirm the ID first by listing their bookings).
 6. List all bookings across all labs for a date (only STAFF/ADMIN).
+7. Add a new lab to the system (only ADMIN and STAFF). Required fields: name, location, capacity, openTime, closeTime. Optional: description, software, status (defaults to OPEN).
+8. Update an existing lab's details or status, e.g. set a lab to MAINTENANCE (only ADMIN and STAFF).
 
 OUTPUT FORMAT — STRICT
 You MUST respond with a single JSON object on its own line. No markdown, no commentary outside the JSON.
@@ -88,14 +103,16 @@ Actions and their fields:
 - {"action":"list_my_bookings"}  — fetch the user's upcoming bookings.
 - {"action":"cancel","bookingId":"<id>"}  — cancel a booking owned by the current user.
 - {"action":"list_all_bookings","date":"YYYY-MM-DD"}  — fetch all bookings on a date (requires STAFF/ADMIN).
+- {"action":"add_lab","name":"<lab name>","location":"<building/room>","capacity":<int>,"openTime":"HH:mm","closeTime":"HH:mm","description":"<optional>","software":"<optional comma-separated>","status":"<optional OPEN/CLOSED/MAINTENANCE, defaults OPEN>"}  — create a new lab (requires ADMIN/STAFF).
+- {"action":"update_lab","lab":"<lab name or id>","status":"<optional>","capacity":"<optional>","openTime":"<optional>","closeTime":"<optional>","description":"<optional>","software":"<optional>"}  — update an existing lab (requires ADMIN/STAFF).
 
 RULES
 - Always convert natural-language dates to ISO YYYY-MM-DD using today's date as reference. "today" = ${todayStr}, "tomorrow" = ${addDays(todayStr, 1)}, etc.
-- Always convert times to 24h HH:mm. "2-4pm" → start "14:00", end "16:00". "10am" → "10:00".
+- Always convert times to 24h HH:mm. "2-4pm" → start "14:00", end "16:00". "10am" → "10:00". "9:30" → "09:30".
 - For "book" actions, if the user did not specify purpose, set purpose to "General use".
 - If essential info is missing (lab, date, or time), respond with an "answer" action asking for the missing info.
 - If the user asks to cancel but did not specify which booking, first respond with list_my_bookings action.
-- Only STAFF and ADMIN can use "list_all_bookings". If a non-admin asks, respond with an "answer" explaining the restriction.
+- Only STAFF and ADMIN can use "list_all_bookings", "add_lab", and "update_lab". If a non-admin/staff asks, respond with an "answer" explaining the restriction.
 - For free-form chat (greetings, jokes, questions about lab policies), use "answer".
 - Never invent booking IDs. Only use IDs you would obtain from a list_my_bookings action.
 - Keep answers concise and friendly. Address the user by their first name when natural.
@@ -106,7 +123,9 @@ User: "What labs are available?" → {"action":"list_labs"}
 User: "Is Lab A free tomorrow afternoon?" → {"action":"check_availability","lab":"Lab A","date":"${addDays(todayStr, 1)}"}
 User: "Book Lab B tomorrow 2-4pm for ML project" → {"action":"book","lab":"Lab B","date":"${addDays(todayStr, 1)}","start":"14:00","end":"16:00","purpose":"ML project"}
 User: "Show my bookings" → {"action":"list_my_bookings"}
-User: "Cancel my booking" → {"action":"list_my_bookings"}`
+User: "Cancel my booking" → {"action":"list_my_bookings"}
+User: "Add a new lab called Lab E on the third floor with 25 seats, open 9 to 5" (admin/staff) → {"action":"add_lab","name":"Lab E — Third Floor","location":"Third Floor, Room 301","capacity":25,"openTime":"09:00","closeTime":"17:00","status":"OPEN"}
+User: "Set Lab D to maintenance" (admin/staff) → {"action":"update_lab","lab":"Lab D","status":"MAINTENANCE"}`
 }
 
 // Extract the first JSON object from the LLM response
@@ -219,6 +238,7 @@ async function executeAction(action: AgentAction, ctx: AgentContext): Promise<st
       if (!validation.ok) {
         return `I couldn't create that booking: ${validation.error}\n\nWould you like me to check ${lab.name}'s availability on ${formatDate(date)} instead?`
       }
+      const cleanPurpose = (action.purpose || 'General use').slice(0, MAX_PURPOSE_LENGTH)
       const booking = await db.booking.create({
         data: {
           userId: user.id,
@@ -226,11 +246,11 @@ async function executeAction(action: AgentAction, ctx: AgentContext): Promise<st
           date,
           startTime: start,
           endTime: end,
-          purpose: action.purpose || 'General use',
+          purpose: cleanPurpose,
           status: 'CONFIRMED',
         },
       })
-      return `✓ **Booking confirmed**\n\n• Lab: ${lab.name}\n• Date: ${formatDate(date)}\n• Time: ${start}–${end}\n• Purpose: ${action.purpose || 'General use'}\n• Booking ID: \`${booking.id}\`\n\nYou can cancel it anytime by asking me to cancel your bookings.`
+      return `✓ **Booking confirmed**\n\n• Lab: ${lab.name}\n• Date: ${formatDate(date)}\n• Time: ${start}–${end}\n• Purpose: ${cleanPurpose}\n• Booking ID: \`${booking.id}\`\n\nYou can cancel it anytime by asking me to cancel your bookings.`
     }
 
     case 'list_my_bookings': {
@@ -292,8 +312,71 @@ async function executeAction(action: AgentAction, ctx: AgentContext): Promise<st
       return `**All bookings on ${formatDate(date)}** (${bookings.length} total):\n\n${lines.join('\n\n')}`
     }
 
+    case 'add_lab': {
+      if (!canManageLabs(user.role)) {
+        return `Sorry, only admins and staff can add new labs. As a ${user.role.toLowerCase()}, you can book existing labs or check their availability.`
+      }
+      const { name, location, capacity, openTime, closeTime, status, description, software } = action
+      if (!name || !location || capacity === undefined || !openTime || !closeTime) {
+        return `To add a lab I need: name, location, capacity, openTime (HH:mm), and closeTime (HH:mm). For example: "Add Lab E, Building 3 Room 301, 25 seats, open 09:00 close 17:00".`
+      }
+      const v = validateLab({ name, location, capacity, openTime, closeTime, status, description, software })
+      if (!v.ok) return `I couldn't add the lab: ${v.error}`
+      const existing = await db.lab.findUnique({ where: { name } })
+      if (existing) return `A lab named "${name}" already exists. Pick a different name.`
+      const lab = await db.lab.create({
+        data: {
+          name: name.trim(),
+          location: location.trim(),
+          capacity: Number(capacity),
+          openTime,
+          closeTime,
+          status: status || 'OPEN',
+          description: description?.trim() || null,
+          software: software?.trim() || null,
+        },
+      })
+      return `✓ **Lab created**\n\n• Name: ${lab.name}\n• Location: ${lab.location}\n• Capacity: ${lab.capacity}\n• Hours: ${lab.openTime}–${lab.closeTime}\n• Status: ${lab.status.toLowerCase()}\n\nIt's now visible to all users and bookable.`
+    }
+
+    case 'update_lab': {
+      if (!canManageLabs(user.role)) {
+        return `Sorry, only admins and staff can update lab details. As a ${user.role.toLowerCase()}, you can book existing labs or check their availability.`
+      }
+      const lab = await resolveLab(action.lab)
+      if (!lab) {
+        return `I couldn't find a lab matching "${action.lab}". Available labs are: ${(await db.lab.findMany()).map((l) => l.name).join(', ')}.`
+      }
+      // Build updates object from provided fields
+      const updates: any = {}
+      if (action.name) updates.name = action.name
+      if (action.location) updates.location = action.location
+      if (action.capacity !== undefined) updates.capacity = action.capacity
+      if (action.openTime) updates.openTime = action.openTime
+      if (action.closeTime) updates.closeTime = action.closeTime
+      if (action.status) updates.status = action.status
+      if (action.description !== undefined) updates.description = action.description
+      if (action.software !== undefined) updates.software = action.software
+
+      if (Object.keys(updates).length === 0) {
+        return `What would you like to change about ${lab.name}? You can update its status (OPEN/CLOSED/MAINTENANCE), capacity, hours, description, or software.`
+      }
+      const v = validateLab(updates)
+      if (!v.ok) return `I couldn't update the lab: ${v.error}`
+
+      // Rename clash check
+      if (updates.name && updates.name !== lab.name) {
+        const clash = await db.lab.findUnique({ where: { name: updates.name } })
+        if (clash) return `A lab named "${updates.name}" already exists.`
+      }
+
+      const updated = await db.lab.update({ where: { id: lab.id }, data: updates })
+      const changedFields = Object.keys(updates).join(', ')
+      return `✓ **Updated ${updated.name}**\n\nChanged: ${changedFields}.\n\nCurrent details: capacity ${updated.capacity}, hours ${updated.openTime}–${updated.closeTime}, status ${updated.status.toLowerCase()}.`
+    }
+
     default:
-      return `I'm not sure how to handle that. I can: list labs, check availability, book a lab, show your bookings, or cancel a booking. What would you like to do?`
+      return `I'm not sure how to handle that. I can: list labs, check availability, book a lab, show your bookings, cancel a booking, ${canManageLabs(user.role) ? 'add or update labs, ' : ''}or list all bookings. What would you like to do?`
   }
 }
 
@@ -357,7 +440,21 @@ async function ruleBasedFallback(userMessage: string, ctx: AgentContext): Promis
     return `Here are the ${labs.length} computer labs:\n\n${labs.map((l) => `• ${l.name} — ${l.location}, capacity ${l.capacity}, ${l.openTime}–${l.closeTime}, status: ${l.status.toLowerCase()}`).join('\n')}`
   }
   if (msg.includes('my booking')) {
-    return runAgent('show my bookings', ctx).catch(() => 'Could not retrieve bookings.')
+    // Inline the query instead of recursing into runAgent (which would call ZAI.create again)
+    try {
+      const bookings = await db.booking.findMany({
+        where: { userId: ctx.user.id, status: { in: ['CONFIRMED', 'PENDING'] } },
+        include: { lab: true },
+        orderBy: [{ date: 'asc' }, { startTime: 'asc' }],
+      })
+      if (bookings.length === 0) {
+        return `You have no upcoming bookings, ${ctx.user.name.split(' ')[0]}.`
+      }
+      const lines = bookings.map((b) => `• ID \`${b.id}\` — ${b.lab.name}\n  ${formatDate(b.date)} · ${b.startTime}–${b.endTime} · ${b.purpose || 'General use'}`)
+      return `Here are your ${bookings.length} upcoming booking(s):\n\n${lines.join('\n\n')}`
+    } catch {
+      return `I couldn't retrieve your bookings right now. Please try again in a moment.`
+    }
   }
   return `I'm currently in offline mode and can only handle simple requests. Try saying "list labs" or "show my bookings". For full natural-language booking, please retry in a moment.`
 }

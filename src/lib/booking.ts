@@ -17,20 +17,34 @@ export const minutesToTime = (mins: number): string => {
   return `${String(h).padStart(2, '0')}:${String(m).padStart(2, '0')}`
 }
 
-export const isValidTime = (t: string): boolean => /^\d{2}:\d{2}$/.test(t)
+export const isValidTime = (t: string): boolean => /^\d{2}:\d{2}$/.test(t) && timeToMinutes(t) >= 0 && timeToMinutes(t) < 24 * 60
 
-// Date helpers (YYYY-MM-DD)
-export const todayISO = (): string => new Date().toISOString().slice(0, 10)
+// Date helpers (YYYY-MM-DD) — use LOCAL date, not UTC
+// Sweden locale ('sv-SE') formats as YYYY-MM-DD, which is what we want for the user's local day
+export const todayISO = (): string => new Date().toLocaleDateString('sv-SE')
+
+export const isValidDate = (d: string): boolean => /^\d{4}-\d{2}-\d{2}$/.test(d) && !isNaN(new Date(d + 'T00:00:00').getTime())
 
 export const addDays = (dateStr: string, n: number): string => {
   const d = new Date(dateStr + 'T00:00:00')
   d.setDate(d.getDate() + n)
-  return d.toISOString().slice(0, 10)
+  return d.toLocaleDateString('sv-SE')
 }
 
 export const formatDate = (dateStr: string): string => {
   const d = new Date(dateStr + 'T00:00:00')
   return d.toLocaleDateString('en-US', { weekday: 'short', month: 'short', day: 'numeric' })
+}
+
+// Generate time slot options for a lab, in 30-minute increments
+export const generateTimeOptions = (openTime: string, closeTime: string): string[] => {
+  const options: string[] = []
+  const open = timeToMinutes(openTime)
+  const close = timeToMinutes(closeTime)
+  for (let m = open; m <= close; m += 30) {
+    options.push(minutesToTime(m))
+  }
+  return options
 }
 
 // Conflict check — does [startA, endA) overlap [startB, endB)?
@@ -110,6 +124,9 @@ export const validateBooking = async (params: {
   if (!labId || !date || !startTime || !endTime) {
     return { ok: false, error: 'Missing required fields (labId, date, startTime, endTime).' }
   }
+  if (!isValidDate(date)) {
+    return { ok: false, error: 'Date must be in YYYY-MM-DD format.' }
+  }
   if (!isValidTime(startTime) || !isValidTime(endTime)) {
     return { ok: false, error: 'Times must be in HH:mm 24h format.' }
   }
@@ -149,4 +166,54 @@ export const validateBooking = async (params: {
 
 // Role-based permissions
 export const canApproveBookings = (role: string) => role === 'ADMIN' || role === 'STAFF'
-export const canManageLabs = (role: string) => role === 'ADMIN'
+export const canManageLabs = (role: string) => role === 'ADMIN' || role === 'STAFF'
+
+// Field length limits (defense against abuse)
+export const MAX_PURPOSE_LENGTH = 500
+export const MAX_LAB_NAME_LENGTH = 100
+export const MAX_LAB_LOCATION_LENGTH = 200
+export const MAX_LAB_DESCRIPTION_LENGTH = 1000
+export const MAX_SOFTWARE_LENGTH = 500
+
+// Validate a lab create/update payload — returns { ok, error? }
+export const validateLab = (params: {
+  name?: string
+  location?: string
+  capacity?: number
+  openTime?: string
+  closeTime?: string
+  status?: string
+  description?: string | null
+  software?: string | null
+}): { ok: boolean; error?: string } => {
+  const { name, location, capacity, openTime, closeTime, status, description, software } = params
+
+  if (name !== undefined) {
+    if (!name.trim()) return { ok: false, error: 'Lab name is required.' }
+    if (name.length > MAX_LAB_NAME_LENGTH) return { ok: false, error: `Lab name must be ≤ ${MAX_LAB_NAME_LENGTH} chars.` }
+  }
+  if (location !== undefined) {
+    if (!location.trim()) return { ok: false, error: 'Location is required.' }
+    if (location.length > MAX_LAB_LOCATION_LENGTH) return { ok: false, error: `Location must be ≤ ${MAX_LAB_LOCATION_LENGTH} chars.` }
+  }
+  if (capacity !== undefined) {
+    if (!Number.isInteger(capacity) || capacity < 1 || capacity > 1000) {
+      return { ok: false, error: 'Capacity must be a whole number between 1 and 1000.' }
+    }
+  }
+  if (openTime !== undefined && !isValidTime(openTime)) return { ok: false, error: 'Open time must be HH:mm.' }
+  if (closeTime !== undefined && !isValidTime(closeTime)) return { ok: false, error: 'Close time must be HH:mm.' }
+  if (openTime !== undefined && closeTime !== undefined && timeToMinutes(openTime) >= timeToMinutes(closeTime)) {
+    return { ok: false, error: 'Open time must be earlier than close time.' }
+  }
+  if (status !== undefined && !['OPEN', 'CLOSED', 'MAINTENANCE'].includes(status)) {
+    return { ok: false, error: 'Status must be OPEN, CLOSED, or MAINTENANCE.' }
+  }
+  if (description !== undefined && description !== null && description.length > MAX_LAB_DESCRIPTION_LENGTH) {
+    return { ok: false, error: `Description must be ≤ ${MAX_LAB_DESCRIPTION_LENGTH} chars.` }
+  }
+  if (software !== undefined && software !== null && software.length > MAX_SOFTWARE_LENGTH) {
+    return { ok: false, error: `Software list must be ≤ ${MAX_SOFTWARE_LENGTH} chars.` }
+  }
+  return { ok: true }
+}
