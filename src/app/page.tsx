@@ -1297,8 +1297,36 @@ function StatCard({ label, value, icon }: { label: string; value: any; icon: Rea
 
 // ---------- Main page ----------
 export default function Home() {
-  const [user, setUser] = useState<User | null>(() => (typeof window !== 'undefined' ? loadUser() : null))
+  // Always start with null user + loading=true so server and client render
+  // the same initial HTML (the loading screen). The real user is loaded from
+  // localStorage in a useEffect after hydration completes.
+  const [user, setUser] = useState<User | null>(null)
+  const [loading, setLoading] = useState(true)
   const [tab, setTab] = useState('chat')
+
+  useEffect(() => {
+    // Defer to next tick to avoid synchronous state update in effect body
+    // (also lets the loading screen render before we swap to the authenticated app)
+    const id = setTimeout(() => {
+      setUser(loadUser())
+      setLoading(false)
+    }, 0)
+    return () => clearTimeout(id)
+  }, [])
+
+  // Loading state — matches what the server renders, so no hydration mismatch
+  if (loading) {
+    return (
+      <div className="min-h-screen flex flex-col items-center justify-center gap-3 bg-background">
+        <div className="w-12 h-12 rounded-xl bg-gradient-to-br from-emerald-500 to-teal-600 text-white flex items-center justify-center">
+          <Bot className="w-6 h-6" />
+        </div>
+        <div className="flex items-center gap-2 text-sm text-muted-foreground">
+          <Loader2 className="w-4 h-4 animate-spin" /> Loading Labby…
+        </div>
+      </div>
+    )
+  }
 
   if (!user) {
     return <LoginScreen onLogin={setUser} />
