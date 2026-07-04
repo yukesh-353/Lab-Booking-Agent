@@ -1,31 +1,34 @@
 import { NextRequest, NextResponse } from 'next/server'
+import { getServerSession } from 'next-auth'
+import { authOptions } from '@/lib/auth'
 import { db } from '@/lib/db'
 import { runAgent, type ChatMessage } from '@/lib/agent'
 
-// POST /api/chat — runs the booking agent for the current user
-// Body: { userId, message, history }
+// POST /api/chat — runs the booking agent for the current session user
+// Body: { message, history }
 export async function POST(req: NextRequest) {
+  const session = await getServerSession(authOptions)
+  if (!session?.user?.id) {
+    return NextResponse.json({ error: 'Not authenticated' }, { status: 401 })
+  }
+
   const body = await req.json()
-  const { userId, message, history } = body as {
-    userId: string
+  const { message, history } = body as {
     message: string
     history?: ChatMessage[]
   }
 
-  if (!userId || !message) {
-    return NextResponse.json({ error: 'userId and message are required' }, { status: 400 })
+  if (!message) {
+    return NextResponse.json({ error: 'message is required' }, { status: 400 })
   }
-
-  const user = await db.user.findUnique({ where: { id: userId } })
-  if (!user) return NextResponse.json({ error: 'User not found' }, { status: 404 })
 
   const reply = await runAgent(message, {
     user: {
-      id: user.id,
-      name: user.name,
-      role: user.role,
-      email: user.email,
-      department: user.department,
+      id: session.user.id,
+      name: session.user.name || session.user.email,
+      role: session.user.role,
+      email: session.user.email,
+      department: session.user.department,
     },
     history: Array.isArray(history) ? history : [],
   })

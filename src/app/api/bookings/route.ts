@@ -1,31 +1,29 @@
 import { NextRequest, NextResponse } from 'next/server'
+import { getServerSession } from 'next-auth'
+import { authOptions } from '@/lib/auth'
 import { db } from '@/lib/db'
-import { validateBooking, todayISO } from '@/lib/booking'
+import { validateBooking } from '@/lib/booking'
 
-// GET /api/bookings?userId=...&scope=all|mine&date=YYYY-MM-DD
+// GET /api/bookings?scope=all|mine&date=YYYY-MM-DD
+// Uses session for authentication (no userId in query)
 export async function GET(req: NextRequest) {
+  const session = await getServerSession(authOptions)
+  if (!session?.user?.id) {
+    return NextResponse.json({ error: 'Not authenticated' }, { status: 401 })
+  }
+
   const url = new URL(req.url)
-  const userId = url.searchParams.get('userId')
   const scope = url.searchParams.get('scope') || 'mine'
   const date = url.searchParams.get('date')
 
-  if (!userId) {
-    return NextResponse.json({ error: 'userId is required' }, { status: 400 })
-  }
-
-  const user = await db.user.findUnique({ where: { id: userId } })
-  if (!user) {
-    return NextResponse.json({ error: 'User not found' }, { status: 404 })
-  }
-
   const where: any = { status: { in: ['CONFIRMED', 'PENDING'] } }
   if (scope === 'all') {
-    if (user.role !== 'ADMIN' && user.role !== 'STAFF') {
+    if (session.user.role !== 'ADMIN' && session.user.role !== 'STAFF') {
       return NextResponse.json({ error: 'Insufficient permissions to view all bookings' }, { status: 403 })
     }
     if (date) where.date = date
   } else {
-    where.userId = userId
+    where.userId = session.user.id
   }
 
   const bookings = await db.booking.findMany({
@@ -36,27 +34,30 @@ export async function GET(req: NextRequest) {
   return NextResponse.json({ bookings })
 }
 
-// POST /api/bookings — create a new booking
+// POST /api/bookings — create a new booking (uses session user)
 export async function POST(req: NextRequest) {
+  const session = await getServerSession(authOptions)
+  if (!session?.user?.id) {
+    return NextResponse.json({ error: 'Not authenticated' }, { status: 401 })
+  }
+
   const body = await req.json()
-  const { userId, labId, date, startTime, endTime, purpose } = body
+  const { labId, date, startTime, endTime, purpose } = body
 
-  if (!userId) {
-    return NextResponse.json({ error: 'userId is required' }, { status: 400 })
-  }
-  const user = await db.user.findUnique({ where: { id: userId } })
-  if (!user) {
-    return NextResponse.json({ error: 'User not found' }, { status: 404 })
-  }
-
-  const validation = await validateBooking({ labId, date, startTime, endTime, userId })
+  const validation = await validateBooking({
+    labId,
+    date,
+    startTime,
+    endTime,
+    userId: session.user.id,
+  })
   if (!validation.ok) {
     return NextResponse.json({ error: validation.error }, { status: 400 })
   }
 
   const booking = await db.booking.create({
     data: {
-      userId,
+      userId: session.user.id,
       labId,
       date,
       startTime,
@@ -67,30 +68,4 @@ export async function POST(req: NextRequest) {
     include: { lab: true },
   })
   return NextResponse.json({ booking })
-}
-
-// PATCH /api/bookings — bulk update (e.g. cancel by id)
-export async function PATCH(req: NextRequest) {
-  const body = await req.json()
-  const { id, status, userId } = body
-  if (!id || !userId) {
-    return NextResponse.json({ error: 'id and userId are required' }, { status: 400 })
-  }
-  const user = await db.user.findUnique({ where: { id: userId } })
-  if (!user) return NextResponse.json({ error: 'User not found' }, { status: 404 })
-
-  const booking = await db.booking.findUnique({ where: { id }, include: { user: true } })
-  if (!booking) return NextResponse.json({ error: 'Booking not found' }, { status: 404 })
-
-  // Only owner or admin/staff can update
-  if (booking.userId !== userId && user.role !== 'ADMIN' && user.role !== 'STAFF') {
-    return NextResponse.json({ error: 'Forbidden' }, { status: 403 })
-  }
-
-  const updated = await db.booking.update({
-    where: { id },
-    data: { status },
-    include: { lab: true },
-  })
-  return NextResponse.json({ booking: updated })
 }

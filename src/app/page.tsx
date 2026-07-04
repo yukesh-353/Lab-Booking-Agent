@@ -1,6 +1,9 @@
 'use client'
 
 import { useState, useEffect, useRef, useCallback } from 'react'
+import { useSession, signIn, signOut } from 'next-auth/react'
+import { useTheme } from 'next-themes'
+import Image from 'next/image'
 import { Button } from '@/components/ui/button'
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card'
 import { Input } from '@/components/ui/input'
@@ -10,20 +13,17 @@ import { Badge } from '@/components/ui/badge'
 import { ScrollArea } from '@/components/ui/scroll-area'
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select'
 import {
+  DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger, DropdownMenuSeparator, DropdownMenuLabel,
+} from '@/components/ui/dropdown-menu'
+import {
   Bot, Send, Calendar as CalendarIcon, LayoutDashboard, Shield, LogOut, Loader2, User,
   Clock, MapPin, Users, Monitor, CheckCircle2, XCircle, CalendarDays, Sparkles, History,
+  Mail, Sun, Moon, Contrast, Flame, Palette, LogIn, AlertCircle,
 } from 'lucide-react'
 import { useToast } from '@/hooks/use-toast'
 import { format } from 'date-fns'
 
 // ---------- Types ----------
-interface User {
-  id: string
-  name: string
-  email: string
-  role: 'STUDENT' | 'FACULTY' | 'STAFF' | 'ADMIN'
-  department?: string | null
-}
 interface Lab {
   id: string
   name: string
@@ -51,30 +51,13 @@ interface Booking {
   purpose?: string | null
   status: 'PENDING' | 'CONFIRMED' | 'CANCELLED' | 'REJECTED'
   lab: Lab
-  user?: User
+  user?: { name: string; role: string; email: string }
   createdAt?: string
 }
 interface ChatMessage {
   role: 'user' | 'assistant'
   content: string
   ts: number
-}
-
-// ---------- Local session storage ----------
-const USER_KEY = 'labby_user'
-
-function loadUser(): User | null {
-  try {
-    const raw = typeof window !== 'undefined' ? localStorage.getItem(USER_KEY) : null
-    return raw ? (JSON.parse(raw) as User) : null
-  } catch {
-    return null
-  }
-}
-function saveUser(u: User | null) {
-  if (typeof window === 'undefined') return
-  if (u) localStorage.setItem(USER_KEY, JSON.stringify(u))
-  else localStorage.removeItem(USER_KEY)
 }
 
 // ---------- Quick suggestions ----------
@@ -85,132 +68,332 @@ const QUICK_PROMPTS = [
   'Show my bookings',
 ]
 
-// ---------- Login screen ----------
-function LoginScreen({ onLogin }: { onLogin: (u: User) => void }) {
-  const [mode, setMode] = useState<'demo' | 'custom'>('demo')
-  const [name, setName] = useState('')
+// ---------- Theme switcher ----------
+const THEMES = [
+  { id: 'light', label: 'Light', description: 'Clean daytime', icon: Sun },
+  { id: 'dark', label: 'Dark', description: 'Standard dark mode', icon: Moon },
+  { id: 'amoled', label: 'AMOLED', description: 'Pure black for OLED screens', icon: Contrast },
+  { id: 'ambient', label: 'Ambient', description: 'Warm low-light for night', icon: Flame },
+]
+
+function ThemeSwitcher() {
+  const { theme, setTheme } = useTheme()
+  const [mounted, setMounted] = useState(false)
+  useEffect(() => {
+    // Defer to next tick to avoid synchronous state update in effect body
+    const id = setTimeout(() => setMounted(true), 0)
+    return () => clearTimeout(id)
+  }, [])
+
+  if (!mounted) {
+    return (
+      <Button variant="ghost" size="icon" className="h-9 w-9">
+        <Palette className="h-4 w-4" />
+      </Button>
+    )
+  }
+
+  const current = THEMES.find((t) => t.id === theme) || THEMES[0]
+  const CurrentIcon = current.icon
+
+  return (
+    <DropdownMenu>
+      <DropdownMenuTrigger asChild>
+        <Button variant="ghost" size="icon" className="h-9 w-9" title={`Theme: ${current.label}`}>
+          <CurrentIcon className="h-4 w-4" />
+        </Button>
+      </DropdownMenuTrigger>
+      <DropdownMenuContent align="end" className="w-56">
+        <DropdownMenuLabel className="text-xs text-muted-foreground">Theme</DropdownMenuLabel>
+        <DropdownMenuSeparator />
+        {THEMES.map((t) => {
+          const Icon = t.icon
+          return (
+            <DropdownMenuItem
+              key={t.id}
+              onClick={() => setTheme(t.id)}
+              className="flex items-start gap-2 py-2 cursor-pointer"
+            >
+              <Icon className="h-4 w-4 mt-0.5 shrink-0" />
+              <div className="flex-1">
+                <div className="text-sm font-medium flex items-center justify-between">
+                  {t.label}
+                  {theme === t.id && <CheckCircle2 className="h-3.5 w-3.5 text-primary" />}
+                </div>
+                <div className="text-xs text-muted-foreground">{t.description}</div>
+              </div>
+            </DropdownMenuItem>
+          )
+        })}
+      </DropdownMenuContent>
+    </DropdownMenu>
+  )
+}
+
+// ---------- Logo ----------
+function Logo({ size = 32, className = '' }: { size?: number; className?: string }) {
+  return (
+    <Image
+      src="/logo.svg"
+      alt="Labby"
+      width={size}
+      height={size}
+      className={`rounded-lg ${className}`}
+      priority
+    />
+  )
+}
+
+// ---------- Login screen (magic link) ----------
+function LoginScreen() {
+  const { data: session, status, update } = useSession()
   const [email, setEmail] = useState('')
-  const [role, setRole] = useState<'STUDENT' | 'FACULTY' | 'STAFF' | 'ADMIN'>('STUDENT')
-  const [department, setDepartment] = useState('')
-  const [loading, setLoading] = useState(false)
+  const [sending, setSending] = useState(false)
+  const [pendingEmail, setPendingEmail] = useState<string | null>(null)
+  const [polling, setPolling] = useState(false)
+  const [magicLink, setMagicLink] = useState<string | null>(null)
+  const [needsProfile, setNeedsProfile] = useState(false)
+  const [profile, setProfile] = useState({ name: '', role: 'STUDENT' as 'STUDENT' | 'FACULTY' | 'STAFF' | 'ADMIN', department: '' })
+  const [savingProfile, setSavingProfile] = useState(false)
   const { toast } = useToast()
 
-  const demoUsers = [
-    { email: 'alice@campus.edu', label: 'Alice Chen · Student · Computer Science' },
-    { email: 'bob@campus.edu', label: 'Bob Patel · Faculty · Computer Science' },
-    { email: 'carol@campus.edu', label: 'Carol Reyes · Staff · IT Services' },
-    { email: 'admin@campus.edu', label: 'Admin Wang · Admin · IT Services' },
-  ]
+  // Auto-detect when session arrives but lacks a name → ask user to complete profile
+  useEffect(() => {
+    if (status === 'authenticated' && session?.user?.email && !session.user.name) {
+      setNeedsProfile(true)
+    }
+  }, [status, session])
 
-  const loginDemo = async (email: string) => {
-    setLoading(true)
+  // Poll for magic link in dev mailbox
+  useEffect(() => {
+    if (!pendingEmail) return
+    setPolling(true)
+    let cancelled = false
+    const poll = async () => {
+      try {
+        const res = await fetch(`/api/auth/dev-mailbox?email=${encodeURIComponent(pendingEmail)}`)
+        const data = await res.json()
+        if (!cancelled && data.found && data.url) {
+          setMagicLink(data.url)
+          setPolling(false)
+          return
+        }
+      } catch {}
+      if (!cancelled) {
+        setTimeout(poll, 1500)
+      }
+    }
+    poll()
+    return () => { cancelled = true }
+  }, [pendingEmail])
+
+  const sendMagicLink = async () => {
+    if (!email.trim()) {
+      toast({ title: 'Email required', description: 'Enter your campus email to receive a sign-in link.', variant: 'destructive' })
+      return
+    }
+    setSending(true)
+    setMagicLink(null)
+    setPendingEmail(email.trim().toLowerCase())
     try {
-      const res = await fetch(`/api/session?email=${encodeURIComponent(email)}`)
-      const data = await res.json()
-      if (!res.ok) throw new Error(data.error || 'Login failed')
-      saveUser(data.user)
-      onLogin(data.user)
+      const res = await signIn('email', {
+        email: email.trim().toLowerCase(),
+        redirect: false,
+        callbackUrl: '/',
+      })
+      if (res?.error) {
+        toast({ title: 'Sign-in failed', description: res.error, variant: 'destructive' })
+        setPendingEmail(null)
+      } else {
+        toast({
+          title: 'Magic link sent',
+          description: 'Check the dev mailbox panel below (or your real inbox in production).',
+        })
+      }
     } catch (e: any) {
-      toast({ title: 'Login failed', description: e.message, variant: 'destructive' })
+      toast({ title: 'Sign-in failed', description: e.message, variant: 'destructive' })
+      setPendingEmail(null)
     } finally {
-      setLoading(false)
+      setSending(false)
     }
   }
 
-  const loginCustom = async () => {
-    if (!name.trim() || !email.trim()) {
-      toast({ title: 'Name and email are required', variant: 'destructive' })
+  const openLink = async () => {
+    if (!magicLink) return
+    // Open the magic link in a new tab — NextAuth will verify and set the session cookie
+    window.open(magicLink, '_blank')
+  }
+
+  const tryDemoAccount = async (demoEmail: string) => {
+    setEmail(demoEmail)
+    setPendingEmail(demoEmail.toLowerCase())
+    setSending(true)
+    try {
+      await signIn('email', { email: demoEmail, redirect: false, callbackUrl: '/' })
+      toast({ title: 'Magic link sent', description: `Check the dev mailbox for ${demoEmail}` })
+    } finally {
+      setSending(false)
+    }
+  }
+
+  const saveProfile = async () => {
+    if (!profile.name.trim()) {
+      toast({ title: 'Name required', variant: 'destructive' })
       return
     }
-    setLoading(true)
+    setSavingProfile(true)
     try {
-      const res = await fetch('/api/session', {
+      const res = await fetch('/api/auth/complete-profile', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ email: email.trim(), name: name.trim(), role, department: department.trim() || undefined }),
+        body: JSON.stringify(profile),
       })
       const data = await res.json()
-      if (!res.ok) throw new Error(data.error || 'Login failed')
-      saveUser(data.user)
-      onLogin(data.user)
+      if (!res.ok) throw new Error(data.error)
+      await update({ role: profile.role, department: profile.department, name: profile.name })
+      setNeedsProfile(false)
+      toast({ title: 'Profile saved', description: `Welcome, ${profile.name}!` })
     } catch (e: any) {
-      toast({ title: 'Login failed', description: e.message, variant: 'destructive' })
+      toast({ title: 'Failed to save profile', description: e.message, variant: 'destructive' })
     } finally {
-      setLoading(false)
+      setSavingProfile(false)
     }
+  }
+
+  // If authenticated but profile incomplete, show profile-completion form
+  if (needsProfile) {
+    return (
+      <div className="min-h-screen flex flex-col items-center justify-center bg-gradient-to-br from-emerald-50 via-white to-teal-50 dark:from-slate-950 dark:via-slate-900 dark:to-emerald-950 amoled:from-black amoled:via-black amoled:to-emerald-950 ambient:from-amber-950/40 ambient:via-stone-900 ambient:to-amber-900/40 p-4">
+        <div className="w-full max-w-md space-y-6">
+          <div className="text-center space-y-2">
+            <Logo size={64} className="mx-auto" />
+            <h1 className="text-2xl font-bold tracking-tight">Complete your profile</h1>
+            <p className="text-muted-foreground text-sm">Welcome to Labby! Tell us a bit about yourself.</p>
+          </div>
+          <Card>
+            <CardContent className="space-y-4 pt-6">
+              <div className="space-y-1.5">
+                <Label htmlFor="profile-name">Full name</Label>
+                <Input id="profile-name" value={profile.name} onChange={(e) => setProfile({ ...profile, name: e.target.value })} placeholder="Jane Doe" />
+              </div>
+              <div className="space-y-1.5">
+                <Label htmlFor="profile-role">Role</Label>
+                <Select value={profile.role} onValueChange={(v) => setProfile({ ...profile, role: v as any })}>
+                  <SelectTrigger><SelectValue /></SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="STUDENT">Student</SelectItem>
+                    <SelectItem value="FACULTY">Faculty</SelectItem>
+                    <SelectItem value="STAFF">Staff</SelectItem>
+                    <SelectItem value="ADMIN">Admin</SelectItem>
+                  </SelectContent>
+                </Select>
+              </div>
+              <div className="space-y-1.5">
+                <Label htmlFor="profile-dept">Department (optional)</Label>
+                <Input id="profile-dept" value={profile.department} onChange={(e) => setProfile({ ...profile, department: e.target.value })} placeholder="Computer Science" />
+              </div>
+              <Button className="w-full" onClick={saveProfile} disabled={savingProfile}>
+                {savingProfile ? <Loader2 className="w-4 h-4 mr-2 animate-spin" /> : null}
+                Save & continue
+              </Button>
+            </CardContent>
+          </Card>
+        </div>
+      </div>
+    )
   }
 
   return (
-    <div className="min-h-screen flex flex-col items-center justify-center bg-gradient-to-br from-emerald-50 via-white to-teal-50 dark:from-slate-950 dark:via-slate-900 dark:to-emerald-950 p-4">
+    <div className="min-h-screen flex flex-col items-center justify-center bg-gradient-to-br from-emerald-50 via-white to-teal-50 dark:from-slate-950 dark:via-slate-900 dark:to-emerald-950 amoled:from-black amoled:via-black amoled:to-emerald-950 ambient:from-amber-950/40 ambient:via-stone-900 ambient:to-amber-900/40 p-4">
+      <div className="absolute top-4 right-4">
+        <ThemeSwitcher />
+      </div>
       <div className="w-full max-w-md space-y-6">
         <div className="text-center space-y-2">
-          <div className="inline-flex items-center justify-center w-16 h-16 rounded-2xl bg-gradient-to-br from-emerald-500 to-teal-600 text-white shadow-lg">
-            <Bot className="w-8 h-8" />
-          </div>
+          <Logo size={72} className="mx-auto" />
           <h1 className="text-3xl font-bold tracking-tight">Labby</h1>
           <p className="text-muted-foreground text-sm">Your AI agent for campus computer lab bookings</p>
         </div>
 
         <Card>
           <CardHeader>
-            <CardTitle className="text-lg">Sign in to continue</CardTitle>
-            <CardDescription>Pick a demo account or create your own</CardDescription>
+            <CardTitle className="text-lg flex items-center gap-2"><Mail className="w-4 h-4 text-primary" /> Sign in with magic link</CardTitle>
+            <CardDescription>Enter your email — we'll send a one-click sign-in link.</CardDescription>
           </CardHeader>
           <CardContent className="space-y-4">
-            <Tabs value={mode} onValueChange={(v) => setMode(v as 'demo' | 'custom')}>
-              <TabsList className="grid w-full grid-cols-2">
-                <TabsTrigger value="demo">Demo accounts</TabsTrigger>
-                <TabsTrigger value="custom">Custom</TabsTrigger>
-              </TabsList>
-              <TabsContent value="demo" className="space-y-2 pt-4">
-                {demoUsers.map((u) => (
-                  <Button
-                    key={u.email}
-                    variant="outline"
-                    className="w-full justify-start text-left h-auto py-3"
-                    disabled={loading}
-                    onClick={() => loginDemo(u.email)}
-                  >
-                    <User className="w-4 h-4 mr-3 shrink-0" />
-                    <span className="text-sm">{u.label}</span>
-                  </Button>
-                ))}
-              </TabsContent>
-              <TabsContent value="custom" className="space-y-3 pt-4">
-                <div className="space-y-1.5">
-                  <Label htmlFor="name">Name</Label>
-                  <Input id="name" value={name} onChange={(e) => setName(e.target.value)} placeholder="Jane Doe" />
-                </div>
-                <div className="space-y-1.5">
-                  <Label htmlFor="email">Email</Label>
-                  <Input id="email" type="email" value={email} onChange={(e) => setEmail(e.target.value)} placeholder="jane@campus.edu" />
-                </div>
-                <div className="space-y-1.5">
-                  <Label htmlFor="role">Role</Label>
-                  <Select value={role} onValueChange={(v) => setRole(v as any)}>
-                    <SelectTrigger><SelectValue /></SelectTrigger>
-                    <SelectContent>
-                      <SelectItem value="STUDENT">Student</SelectItem>
-                      <SelectItem value="FACULTY">Faculty</SelectItem>
-                      <SelectItem value="STAFF">Staff</SelectItem>
-                      <SelectItem value="ADMIN">Admin</SelectItem>
-                    </SelectContent>
-                  </Select>
-                </div>
-                <div className="space-y-1.5">
-                  <Label htmlFor="dept">Department (optional)</Label>
-                  <Input id="dept" value={department} onChange={(e) => setDepartment(e.target.value)} placeholder="Computer Science" />
-                </div>
-                <Button className="w-full" disabled={loading} onClick={loginCustom}>
-                  {loading ? <Loader2 className="w-4 h-4 mr-2 animate-spin" /> : null}
-                  Sign in
+            <div className="space-y-1.5">
+              <Label htmlFor="email">Email</Label>
+              <div className="flex gap-2">
+                <Input
+                  id="email"
+                  type="email"
+                  value={email}
+                  onChange={(e) => setEmail(e.target.value)}
+                  onKeyDown={(e) => e.key === 'Enter' && sendMagicLink()}
+                  placeholder="you@campus.edu"
+                  disabled={sending}
+                  className="flex-1"
+                />
+                <Button onClick={sendMagicLink} disabled={sending || !email.trim()} className="bg-emerald-600 hover:bg-emerald-700 text-white">
+                  {sending ? <Loader2 className="w-4 h-4 mr-2 animate-spin" /> : <Mail className="w-4 h-4 mr-2" />}
+                  Send link
                 </Button>
-              </TabsContent>
-            </Tabs>
+              </div>
+            </div>
+
+            {/* Dev mailbox panel — shown after sending */}
+            {pendingEmail && (
+              <div className="rounded-lg border border-emerald-200 dark:border-emerald-900/50 bg-emerald-50/50 dark:bg-emerald-950/20 p-3 space-y-2">
+                <div className="flex items-center gap-2 text-sm font-medium">
+                  {magicLink ? <CheckCircle2 className="w-4 h-4 text-emerald-600" /> : <Loader2 className="w-4 h-4 animate-spin text-emerald-600" />}
+                  {magicLink ? 'Magic link ready' : 'Waiting for magic link...'}
+                </div>
+                <p className="text-xs text-muted-foreground">
+                  To: <code className="font-mono">{pendingEmail}</code>
+                </p>
+                {magicLink ? (
+                  <div className="space-y-2">
+                    <p className="text-xs text-muted-foreground">Click below to sign in (sandbox mode — no real email sent):</p>
+                    <Button onClick={openLink} className="w-full bg-emerald-600 hover:bg-emerald-700 text-white" size="sm">
+                      <LogIn className="w-3.5 h-3.5 mr-2" /> Sign in now
+                    </Button>
+                  </div>
+                ) : (
+                  <p className="text-xs text-muted-foreground">Polling dev mailbox...</p>
+                )}
+              </div>
+            )}
+
+            <div className="relative">
+              <div className="absolute inset-0 flex items-center"><span className="w-full border-t" /></div>
+              <div className="relative flex justify-center text-xs uppercase"><span className="bg-card px-2 text-muted-foreground">Or try a demo account</span></div>
+            </div>
+
+            <div className="grid grid-cols-2 gap-2">
+              {[
+                { email: 'alice@campus.edu', label: 'Alice', role: 'Student' },
+                { email: 'bob@campus.edu', label: 'Bob', role: 'Faculty' },
+                { email: 'carol@campus.edu', label: 'Carol', role: 'Staff' },
+                { email: 'admin@campus.edu', label: 'Admin', role: 'Admin' },
+              ].map((u) => (
+                <Button
+                  key={u.email}
+                  variant="outline"
+                  size="sm"
+                  disabled={sending}
+                  onClick={() => tryDemoAccount(u.email)}
+                  className="flex flex-col items-start h-auto py-2"
+                >
+                  <span className="text-xs font-medium">{u.label}</span>
+                  <span className="text-[10px] text-muted-foreground">{u.role}</span>
+                </Button>
+              ))}
+            </div>
           </CardContent>
         </Card>
+
         <p className="text-xs text-center text-muted-foreground">
-          By signing in you agree to campus IT acceptable-use policy.
+          Sandbox mode: magic links appear in the panel above instead of being emailed.
         </p>
       </div>
     </div>
@@ -218,7 +401,7 @@ function LoginScreen({ onLogin }: { onLogin: (u: User) => void }) {
 }
 
 // ---------- Chat Panel ----------
-function ChatPanel({ user }: { user: User }) {
+function ChatPanel({ user }: { user: { id: string; name: string; role: string; email: string; department?: string | null } }) {
   const [messages, setMessages] = useState<ChatMessage[]>([
     {
       role: 'assistant',
@@ -247,7 +430,7 @@ function ChatPanel({ user }: { user: User }) {
       const res = await fetch('/api/chat', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ userId: user.id, message: trimmed, history }),
+        body: JSON.stringify({ message: trimmed, history }),
       })
       const data = await res.json()
       if (!res.ok) throw new Error(data.error || 'Chat failed')
@@ -273,8 +456,8 @@ function ChatPanel({ user }: { user: User }) {
             ))}
             {loading && (
               <div className="flex gap-3 items-start">
-                <div className="w-8 h-8 rounded-full bg-gradient-to-br from-emerald-500 to-teal-600 text-white flex items-center justify-center shrink-0">
-                  <Bot className="w-4 h-4" />
+                <div className="w-8 h-8 rounded-lg bg-gradient-to-br from-emerald-500 to-teal-600 flex items-center justify-center shrink-0">
+                  <Logo size={32} className="!rounded-none opacity-90" />
                 </div>
                 <div className="bg-muted rounded-2xl rounded-tl-sm px-4 py-3 flex items-center gap-2">
                   <Loader2 className="w-4 h-4 animate-spin" />
@@ -290,25 +473,12 @@ function ChatPanel({ user }: { user: User }) {
         <div className="max-w-3xl mx-auto p-4 space-y-3">
           <div className="flex flex-wrap gap-2">
             {QUICK_PROMPTS.map((p) => (
-              <Button
-                key={p}
-                variant="outline"
-                size="sm"
-                className="text-xs h-8"
-                disabled={loading}
-                onClick={() => send(p)}
-              >
+              <Button key={p} variant="outline" size="sm" className="text-xs h-8" disabled={loading} onClick={() => send(p)}>
                 {p}
               </Button>
             ))}
           </div>
-          <form
-            onSubmit={(e) => {
-              e.preventDefault()
-              send(input)
-            }}
-            className="flex gap-2"
-          >
+          <form onSubmit={(e) => { e.preventDefault(); send(input) }} className="flex gap-2">
             <Input
               value={input}
               onChange={(e) => setInput(e.target.value)}
@@ -332,18 +502,14 @@ function MessageBubble({ message, userName }: { message: ChatMessage; userName: 
 
   return (
     <div className={`flex gap-3 items-start ${isUser ? 'flex-row-reverse' : ''}`}>
-      <div
-        className={`w-8 h-8 rounded-full flex items-center justify-center shrink-0 text-white text-xs font-semibold ${
-          isUser ? 'bg-slate-700' : 'bg-gradient-to-br from-emerald-500 to-teal-600'
-        }`}
-      >
-        {isUser ? initials : <Bot className="w-4 h-4" />}
-      </div>
-      <div
-        className={`max-w-[80%] px-4 py-3 rounded-2xl text-sm whitespace-pre-wrap ${
-          isUser ? 'bg-slate-700 text-white rounded-tr-sm' : 'bg-muted rounded-tl-sm'
-        }`}
-      >
+      {isUser ? (
+        <div className="w-8 h-8 rounded-full bg-slate-700 text-white flex items-center justify-center shrink-0 text-xs font-semibold">
+          {initials}
+        </div>
+      ) : (
+        <Logo size={32} className="shrink-0" />
+      )}
+      <div className={`max-w-[80%] px-4 py-3 rounded-2xl text-sm whitespace-pre-wrap ${isUser ? 'bg-slate-700 text-white rounded-tr-sm' : 'bg-muted rounded-tl-sm'}`}>
         <MarkdownLite content={message.content} />
       </div>
     </div>
@@ -385,7 +551,7 @@ function renderInline(text: string) {
 }
 
 // ---------- Calendar / Availability Panel ----------
-function CalendarPanel({ user }: { user: User }) {
+function CalendarPanel() {
   const [labs, setLabs] = useState<Lab[]>([])
   const [selectedLab, setSelectedLab] = useState<string>('')
   const [selectedDate, setSelectedDate] = useState<string>(new Date().toISOString().slice(0, 10))
@@ -400,7 +566,8 @@ function CalendarPanel({ user }: { user: User }) {
         setLabs(d.labs || [])
         if (d.labs?.length) setSelectedLab(d.labs[0].id)
       })
-  }, [])
+      .catch((e) => toast({ title: 'Failed to load labs', description: e.message, variant: 'destructive' }))
+  }, [toast])
 
   const loadSchedule = useCallback(async () => {
     if (!selectedLab || !selectedDate) return
@@ -418,9 +585,7 @@ function CalendarPanel({ user }: { user: User }) {
     }
   }, [selectedLab, selectedDate, toast])
 
-  useEffect(() => {
-    loadSchedule()
-  }, [loadSchedule])
+  useEffect(() => { loadSchedule() }, [loadSchedule])
 
   const selectedLabObj = labs.find((l) => l.id === selectedLab)
 
@@ -428,7 +593,7 @@ function CalendarPanel({ user }: { user: User }) {
     <div className="space-y-4 p-4 max-w-5xl mx-auto">
       <Card>
         <CardHeader>
-          <CardTitle className="flex items-center gap-2"><CalendarDays className="w-5 h-5 text-emerald-600" /> Lab availability</CardTitle>
+          <CardTitle className="flex items-center gap-2"><CalendarDays className="w-5 h-5 text-primary" /> Lab availability</CardTitle>
           <CardDescription>Check free and booked time slots for any lab on any date.</CardDescription>
         </CardHeader>
         <CardContent className="space-y-4">
@@ -439,9 +604,7 @@ function CalendarPanel({ user }: { user: User }) {
                 <SelectTrigger><SelectValue placeholder="Select a lab" /></SelectTrigger>
                 <SelectContent>
                   {labs.map((l) => (
-                    <SelectItem key={l.id} value={l.id}>
-                      {l.name} {l.status !== 'OPEN' ? `(${l.status.toLowerCase()})` : ''}
-                    </SelectItem>
+                    <SelectItem key={l.id} value={l.id}>{l.name} {l.status !== 'OPEN' ? `(${l.status.toLowerCase()})` : ''}</SelectItem>
                   ))}
                 </SelectContent>
               </Select>
@@ -466,9 +629,7 @@ function CalendarPanel({ user }: { user: User }) {
 
           <div>
             <div className="flex items-center justify-between mb-2">
-              <h4 className="text-sm font-medium">
-                Schedule for {format(new Date(selectedDate + 'T00:00:00'), 'EEEE, MMM d, yyyy')}
-              </h4>
+              <h4 className="text-sm font-medium">Schedule for {format(new Date(selectedDate + 'T00:00:00'), 'EEEE, MMM d, yyyy')}</h4>
               {loading && <Loader2 className="w-4 h-4 animate-spin" />}
             </div>
             <div className="space-y-1.5">
@@ -479,7 +640,7 @@ function CalendarPanel({ user }: { user: User }) {
                 <div
                   key={i}
                   className={`flex items-center justify-between rounded-md border px-3 py-2 text-sm ${
-                    s.booked ? 'border-red-200 bg-red-50 dark:border-red-900/50 dark:bg-red-950/30' : 'border-emerald-200 bg-emerald-50 dark:border-emerald-900/50 dark:bg-emerald-950/30'
+                    s.booked ? 'border-red-200 bg-red-50 dark:border-red-900/50 dark:bg-red-950/30 amoled:border-red-900/40 amoled:bg-red-950/20 ambient:border-red-900/40 ambient:bg-red-950/20' : 'border-emerald-200 bg-emerald-50 dark:border-emerald-900/50 dark:bg-emerald-950/30 amoled:border-emerald-900/40 amoled:bg-emerald-950/20 ambient:border-emerald-900/40 ambient:bg-emerald-950/20'
                   }`}
                 >
                   <div className="flex items-center gap-2">
@@ -487,9 +648,7 @@ function CalendarPanel({ user }: { user: User }) {
                     <span className="font-mono">{s.start} – {s.end}</span>
                   </div>
                   {s.booked ? (
-                    <Badge variant="destructive" className="text-xs">
-                      Booked{s.bookerName ? ` · ${s.bookerName}` : ''}{s.purpose ? ` · ${s.purpose}` : ''}
-                    </Badge>
+                    <Badge variant="destructive" className="text-xs">Booked{s.bookerName ? ` · ${s.bookerName}` : ''}{s.purpose ? ` · ${s.purpose}` : ''}</Badge>
                   ) : (
                     <Badge variant="default" className="text-xs bg-emerald-600 hover:bg-emerald-700">Free</Badge>
                   )}
@@ -498,7 +657,7 @@ function CalendarPanel({ user }: { user: User }) {
             </div>
           </div>
 
-          <div className="rounded-md bg-emerald-50 dark:bg-emerald-950/30 border border-emerald-200 dark:border-emerald-900/50 p-3 text-sm text-muted-foreground">
+          <div className="rounded-md bg-emerald-50 dark:bg-emerald-950/30 amoled:bg-emerald-950/20 ambient:bg-amber-900/20 border border-emerald-200 dark:border-emerald-900/50 p-3 text-sm text-muted-foreground">
             <Sparkles className="w-4 h-4 inline mr-1 text-emerald-600" />
             Tip: Switch to the Chat tab and just say "book {selectedLabObj?.name.split('—')[0].trim() || 'Lab A'} {selectedDate} 14:00-16:00" — Labby will handle it.
           </div>
@@ -509,7 +668,7 @@ function CalendarPanel({ user }: { user: User }) {
 }
 
 // ---------- My Bookings Panel ----------
-function MyBookingsPanel({ user }: { user: User }) {
+function MyBookingsPanel({ user }: { user: { id: string; name: string; role: string } }) {
   const [bookings, setBookings] = useState<Booking[]>([])
   const [loading, setLoading] = useState(true)
   const { toast } = useToast()
@@ -517,7 +676,7 @@ function MyBookingsPanel({ user }: { user: User }) {
   const load = useCallback(async () => {
     setLoading(true)
     try {
-      const res = await fetch(`/api/bookings?userId=${user.id}&scope=mine`)
+      const res = await fetch(`/api/bookings?scope=mine`)
       const data = await res.json()
       if (!res.ok) throw new Error(data.error)
       setBookings(data.bookings || [])
@@ -526,15 +685,13 @@ function MyBookingsPanel({ user }: { user: User }) {
     } finally {
       setLoading(false)
     }
-  }, [user.id, toast])
+  }, [toast])
 
-  useEffect(() => {
-    load()
-  }, [load])
+  useEffect(() => { load() }, [load])
 
   const cancel = async (id: string) => {
     try {
-      const res = await fetch(`/api/bookings/${id}?userId=${user.id}`, { method: 'DELETE' })
+      const res = await fetch(`/api/bookings/${id}`, { method: 'DELETE' })
       const data = await res.json()
       if (!res.ok) throw new Error(data.error)
       toast({ title: 'Booking cancelled', description: 'The slot is now free for others.' })
@@ -552,7 +709,7 @@ function MyBookingsPanel({ user }: { user: User }) {
     <div className="space-y-4 p-4 max-w-5xl mx-auto">
       <Card>
         <CardHeader>
-          <CardTitle className="flex items-center gap-2"><LayoutDashboard className="w-5 h-5 text-emerald-600" /> My bookings</CardTitle>
+          <CardTitle className="flex items-center gap-2"><LayoutDashboard className="w-5 h-5 text-primary" /> My bookings</CardTitle>
           <CardDescription>Your upcoming and past lab reservations.</CardDescription>
         </CardHeader>
         <CardContent>
@@ -572,9 +729,7 @@ function MyBookingsPanel({ user }: { user: User }) {
                   <p className="text-sm text-muted-foreground">No upcoming bookings.</p>
                 ) : (
                   <div className="space-y-2">
-                    {upcoming.map((b) => (
-                      <BookingCard key={b.id} booking={b} onCancel={() => cancel(b.id)} />
-                    ))}
+                    {upcoming.map((b) => <BookingCard key={b.id} booking={b} onCancel={() => cancel(b.id)} />)}
                   </div>
                 )}
               </div>
@@ -582,9 +737,7 @@ function MyBookingsPanel({ user }: { user: User }) {
                 <div>
                   <h3 className="text-sm font-semibold mb-2 text-muted-foreground uppercase tracking-wide">Past ({past.length})</h3>
                   <div className="space-y-2 opacity-70">
-                    {past.map((b) => (
-                      <BookingCard key={b.id} booking={b} onCancel={() => cancel(b.id)} />
-                    ))}
+                    {past.map((b) => <BookingCard key={b.id} booking={b} onCancel={() => cancel(b.id)} />)}
                   </div>
                 </div>
               )}
@@ -615,7 +768,7 @@ function BookingCard({ booking, onCancel }: { booking: Booking; onCancel: () => 
         <div className="text-[10px] text-muted-foreground/70 mt-1 font-mono">ID: {booking.id}</div>
       </div>
       {!cancelled && (
-        <Button variant="ghost" size="sm" className="text-red-600 hover:text-red-700 hover:bg-red-50" onClick={onCancel}>
+        <Button variant="ghost" size="sm" className="text-red-600 hover:text-red-700 hover:bg-red-50 dark:hover:bg-red-950/30" onClick={onCancel}>
           <XCircle className="w-4 h-4 mr-1" /> Cancel
         </Button>
       )}
@@ -624,7 +777,7 @@ function BookingCard({ booking, onCancel }: { booking: Booking; onCancel: () => 
 }
 
 // ---------- Admin Panel ----------
-function AdminPanel({ user }: { user: User }) {
+function AdminPanel({ user }: { user: { id: string; role: string } }) {
   const [stats, setStats] = useState<any>(null)
   const [loading, setLoading] = useState(true)
   const [allBookings, setAllBookings] = useState<Booking[]>([])
@@ -634,7 +787,7 @@ function AdminPanel({ user }: { user: User }) {
   const loadStats = useCallback(async () => {
     setLoading(true)
     try {
-      const res = await fetch(`/api/admin/stats?userId=${user.id}`)
+      const res = await fetch(`/api/admin/stats`)
       const data = await res.json()
       if (!res.ok) throw new Error(data.error)
       setStats(data)
@@ -643,26 +796,21 @@ function AdminPanel({ user }: { user: User }) {
     } finally {
       setLoading(false)
     }
-  }, [user.id, toast])
+  }, [toast])
 
   const loadAllBookings = useCallback(async () => {
     try {
-      const res = await fetch(`/api/bookings?userId=${user.id}&scope=all&date=${allBookingsDate}`)
+      const res = await fetch(`/api/bookings?scope=all&date=${allBookingsDate}`)
       const data = await res.json()
       if (!res.ok) throw new Error(data.error)
       setAllBookings(data.bookings || [])
     } catch (e: any) {
       toast({ title: 'Failed to load bookings', description: e.message, variant: 'destructive' })
     }
-  }, [user.id, allBookingsDate, toast])
+  }, [allBookingsDate, toast])
 
-  useEffect(() => {
-    loadStats()
-  }, [loadStats])
-
-  useEffect(() => {
-    loadAllBookings()
-  }, [loadAllBookings])
+  useEffect(() => { loadStats() }, [loadStats])
+  useEffect(() => { loadAllBookings() }, [loadAllBookings])
 
   if (user.role !== 'ADMIN' && user.role !== 'STAFF') {
     return (
@@ -690,7 +838,6 @@ function AdminPanel({ user }: { user: User }) {
 
   return (
     <div className="space-y-4 p-4 max-w-5xl mx-auto">
-      {/* Stats grid */}
       <div className="grid grid-cols-2 lg:grid-cols-4 gap-3">
         <StatCard label="Total labs" value={stats?.totals?.labs ?? '—'} icon={<Monitor className="w-4 h-4" />} />
         <StatCard label="Total users" value={stats?.totals?.users ?? '—'} icon={<Users className="w-4 h-4" />} />
@@ -698,10 +845,9 @@ function AdminPanel({ user }: { user: User }) {
         <StatCard label="Bookings next 7 days" value={stats?.totals?.bookingsNext7Days ?? '—'} icon={<CalendarDays className="w-4 h-4" />} />
       </div>
 
-      {/* Lab usage */}
       <Card>
         <CardHeader>
-          <CardTitle className="flex items-center gap-2"><History className="w-5 h-5 text-emerald-600" /> Lab usage (next 7 days)</CardTitle>
+          <CardTitle className="flex items-center gap-2"><History className="w-5 h-5 text-primary" /> Lab usage (next 7 days)</CardTitle>
           <CardDescription>Bookings per lab over the coming week.</CardDescription>
         </CardHeader>
         <CardContent>
@@ -729,10 +875,9 @@ function AdminPanel({ user }: { user: User }) {
         </CardContent>
       </Card>
 
-      {/* All bookings for a date */}
       <Card>
         <CardHeader>
-          <CardTitle className="flex items-center gap-2"><CalendarDays className="w-5 h-5 text-emerald-600" /> All bookings on date</CardTitle>
+          <CardTitle className="flex items-center gap-2"><CalendarDays className="w-5 h-5 text-primary" /> All bookings on date</CardTitle>
           <CardDescription>Browse every reservation across campus.</CardDescription>
         </CardHeader>
         <CardContent className="space-y-3">
@@ -769,11 +914,10 @@ function AdminPanel({ user }: { user: User }) {
         </CardContent>
       </Card>
 
-      {/* Recent activity */}
       {stats?.recentActivity?.length > 0 && (
         <Card>
           <CardHeader>
-            <CardTitle className="flex items-center gap-2"><History className="w-5 h-5 text-emerald-600" /> Recent activity</CardTitle>
+            <CardTitle className="flex items-center gap-2"><History className="w-5 h-5 text-primary" /> Recent activity</CardTitle>
             <CardDescription>Latest 10 booking events.</CardDescription>
           </CardHeader>
           <CardContent>
@@ -803,7 +947,7 @@ function StatCard({ label, value, icon }: { label: string; value: any; icon: Rea
       <CardContent className="p-4">
         <div className="flex items-center justify-between">
           <span className="text-xs text-muted-foreground uppercase tracking-wide">{label}</span>
-          <span className="text-emerald-600">{icon}</span>
+          <span className="text-primary">{icon}</span>
         </div>
         <div className="mt-2 text-2xl font-bold">{value}</div>
       </CardContent>
@@ -813,24 +957,40 @@ function StatCard({ label, value, icon }: { label: string; value: any; icon: Rea
 
 // ---------- Main page ----------
 export default function Home() {
-  const [user, setUser] = useState<User | null>(() => (typeof window !== 'undefined' ? loadUser() : null))
+  const { data: session, status, update } = useSession()
   const [tab, setTab] = useState('chat')
 
-  if (!user) {
-    return <LoginScreen onLogin={setUser} />
+  // Loading state during initial session fetch
+  if (status === 'loading') {
+    return (
+      <div className="min-h-screen flex flex-col items-center justify-center gap-3">
+        <Logo size={48} />
+        <div className="flex items-center gap-2 text-sm text-muted-foreground">
+          <Loader2 className="w-4 h-4 animate-spin" /> Loading Labby…
+        </div>
+      </div>
+    )
   }
 
-  const logout = () => {
-    saveUser(null)
-    setUser(null)
+  // Not authenticated → show login
+  if (status !== 'authenticated' || !session?.user) {
+    return <LoginScreen />
+  }
+
+  const user = {
+    id: session.user.id,
+    name: session.user.name || session.user.email,
+    role: session.user.role,
+    email: session.user.email,
+    department: session.user.department,
   }
 
   const roleBadge = {
-    STUDENT: 'bg-blue-100 text-blue-700 dark:bg-blue-950 dark:text-blue-300',
-    FACULTY: 'bg-purple-100 text-purple-700 dark:bg-purple-950 dark:text-purple-300',
-    STAFF: 'bg-amber-100 text-amber-700 dark:bg-amber-950 dark:text-amber-300',
-    ADMIN: 'bg-emerald-100 text-emerald-700 dark:bg-emerald-950 dark:text-emerald-300',
-  }[user.role]
+    STUDENT: 'bg-blue-100 text-blue-700 dark:bg-blue-950 dark:text-blue-300 amoled:bg-blue-950/80 amoled:text-blue-300 ambient:bg-blue-900/40 ambient:text-blue-200',
+    FACULTY: 'bg-purple-100 text-purple-700 dark:bg-purple-950 dark:text-purple-300 amoled:bg-purple-950/80 amoled:text-purple-300 ambient:bg-purple-900/40 ambient:text-purple-200',
+    STAFF: 'bg-amber-100 text-amber-700 dark:bg-amber-950 dark:text-amber-300 amoled:bg-amber-950/80 amoled:text-amber-300 ambient:bg-amber-900/40 ambient:text-amber-200',
+    ADMIN: 'bg-emerald-100 text-emerald-700 dark:bg-emerald-950 dark:text-emerald-300 amoled:bg-emerald-950/80 amoled:text-emerald-300 ambient:bg-emerald-900/40 ambient:text-emerald-200',
+  }[user.role] || ''
 
   const canSeeAdmin = user.role === 'ADMIN' || user.role === 'STAFF'
 
@@ -840,15 +1000,14 @@ export default function Home() {
       <header className="border-b bg-background/95 backdrop-blur sticky top-0 z-10">
         <div className="max-w-6xl mx-auto px-4 h-14 flex items-center justify-between">
           <div className="flex items-center gap-2">
-            <div className="w-8 h-8 rounded-lg bg-gradient-to-br from-emerald-500 to-teal-600 text-white flex items-center justify-center">
-              <Bot className="w-4 h-4" />
-            </div>
+            <Logo size={32} />
             <div>
               <h1 className="font-semibold text-sm leading-tight">Labby</h1>
               <p className="text-[10px] text-muted-foreground leading-tight">Campus Lab Booking Agent</p>
             </div>
           </div>
-          <div className="flex items-center gap-2">
+          <div className="flex items-center gap-1">
+            <ThemeSwitcher />
             <div className="flex items-center gap-2 px-2 py-1 rounded-md bg-muted/50">
               <div className="w-7 h-7 rounded-full bg-slate-700 text-white flex items-center justify-center text-xs font-semibold">
                 {user.name.split(' ').map((s) => s[0]).slice(0, 2).join('')}
@@ -859,7 +1018,7 @@ export default function Home() {
               </div>
               <span className={`text-[10px] px-1.5 py-0.5 rounded-full font-medium ${roleBadge}`}>{user.role.toLowerCase()}</span>
             </div>
-            <Button variant="ghost" size="icon" onClick={logout} title="Sign out">
+            <Button variant="ghost" size="icon" onClick={() => signOut({ callbackUrl: '/' })} title="Sign out">
               <LogOut className="w-4 h-4" />
             </Button>
           </div>
@@ -871,17 +1030,17 @@ export default function Home() {
         <div className="max-w-6xl mx-auto px-4">
           <Tabs value={tab} onValueChange={setTab}>
             <TabsList className="bg-transparent h-12 p-0 gap-4">
-              <TabsTrigger value="chat" className="bg-transparent shadow-none data-[state=active]:bg-transparent data-[state=active]:shadow-none rounded-none border-b-2 border-transparent data-[state=active]:border-emerald-600 data-[state=active]:text-emerald-700 dark:data-[state=active]:text-emerald-400 flex items-center gap-1.5">
+              <TabsTrigger value="chat" className="bg-transparent shadow-none data-[state=active]:bg-transparent data-[state=active]:shadow-none rounded-none border-b-2 border-transparent data-[state=active]:border-primary data-[state=active]:text-primary flex items-center gap-1.5">
                 <Bot className="w-4 h-4" /> Chat Assistant
               </TabsTrigger>
-              <TabsTrigger value="calendar" className="bg-transparent shadow-none data-[state=active]:bg-transparent data-[state=active]:shadow-none rounded-none border-b-2 border-transparent data-[state=active]:border-emerald-600 data-[state=active]:text-emerald-700 dark:data-[state=active]:text-emerald-400 flex items-center gap-1.5">
+              <TabsTrigger value="calendar" className="bg-transparent shadow-none data-[state=active]:bg-transparent data-[state=active]:shadow-none rounded-none border-b-2 border-transparent data-[state=active]:border-primary data-[state=active]:text-primary flex items-center gap-1.5">
                 <CalendarDays className="w-4 h-4" /> Calendar
               </TabsTrigger>
-              <TabsTrigger value="bookings" className="bg-transparent shadow-none data-[state=active]:bg-transparent data-[state=active]:shadow-none rounded-none border-b-2 border-transparent data-[state=active]:border-emerald-600 data-[state=active]:text-emerald-700 dark:data-[state=active]:text-emerald-400 flex items-center gap-1.5">
+              <TabsTrigger value="bookings" className="bg-transparent shadow-none data-[state=active]:bg-transparent data-[state=active]:shadow-none rounded-none border-b-2 border-transparent data-[state=active]:border-primary data-[state=active]:text-primary flex items-center gap-1.5">
                 <LayoutDashboard className="w-4 h-4" /> My Bookings
               </TabsTrigger>
               {canSeeAdmin && (
-                <TabsTrigger value="admin" className="bg-transparent shadow-none data-[state=active]:bg-transparent data-[state=active]:shadow-none rounded-none border-b-2 border-transparent data-[state=active]:border-emerald-600 data-[state=active]:text-emerald-700 dark:data-[state=active]:text-emerald-400 flex items-center gap-1.5">
+                <TabsTrigger value="admin" className="bg-transparent shadow-none data-[state=active]:bg-transparent data-[state=active]:shadow-none rounded-none border-b-2 border-transparent data-[state=active]:border-primary data-[state=active]:text-primary flex items-center gap-1.5">
                   <Shield className="w-4 h-4" /> Admin
                 </TabsTrigger>
               )}
@@ -890,17 +1049,9 @@ export default function Home() {
             <TabsContent value="chat" className="mt-0 h-[calc(100vh-3.5rem-3rem)]">
               <ChatPanel user={user} />
             </TabsContent>
-            <TabsContent value="calendar" className="mt-0">
-              <CalendarPanel user={user} />
-            </TabsContent>
-            <TabsContent value="bookings" className="mt-0">
-              <MyBookingsPanel user={user} />
-            </TabsContent>
-            {canSeeAdmin && (
-              <TabsContent value="admin" className="mt-0">
-                <AdminPanel user={user} />
-              </TabsContent>
-            )}
+            <TabsContent value="calendar" className="mt-0"><CalendarPanel /></TabsContent>
+            <TabsContent value="bookings" className="mt-0"><MyBookingsPanel user={user} /></TabsContent>
+            {canSeeAdmin && <TabsContent value="admin" className="mt-0"><AdminPanel user={user} /></TabsContent>}
           </Tabs>
         </div>
       </div>
