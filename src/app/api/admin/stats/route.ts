@@ -1,13 +1,13 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { db } from '@/lib/db'
-import { todayISO, addDays } from '@/lib/booking'
+import { todayISO, addDays, canViewAdminStats } from '@/lib/booking'
 import { getUserFromRequest } from '@/lib/auth'
 
-// GET /api/admin/stats
+// GET /api/admin/stats — ADMIN only
 export async function GET(req: NextRequest) {
   const user = await getUserFromRequest(req)
   if (!user) return NextResponse.json({ error: 'Not authenticated' }, { status: 401 })
-  if (user.role !== 'ADMIN' && user.role !== 'STAFF') {
+  if (!canViewAdminStats(user.role)) {
     return NextResponse.json({ error: 'Admin access required' }, { status: 403 })
   }
 

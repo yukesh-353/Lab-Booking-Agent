@@ -1,9 +1,11 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { db } from '@/lib/db'
-import { validateBooking, MAX_PURPOSE_LENGTH } from '@/lib/booking'
+import { validateBooking, MAX_PURPOSE_LENGTH, canViewAllBookings } from '@/lib/booking'
 import { getUserFromRequest } from '@/lib/auth'
 
 // GET /api/bookings?scope=all|mine&date=YYYY-MM-DD
+// - scope=mine: any authenticated user can see their own bookings
+// - scope=all: ADMIN only — campus-wide booking view
 export async function GET(req: NextRequest) {
   const user = await getUserFromRequest(req)
   if (!user) {
@@ -16,8 +18,8 @@ export async function GET(req: NextRequest) {
 
   const where: any = { status: { in: ['CONFIRMED', 'PENDING'] } }
   if (scope === 'all') {
-    if (user.role !== 'ADMIN' && user.role !== 'STAFF') {
-      return NextResponse.json({ error: 'Insufficient permissions to view all bookings' }, { status: 403 })
+    if (!canViewAllBookings(user.role)) {
+      return NextResponse.json({ error: 'Only admins can view all bookings' }, { status: 403 })
     }
     if (date) where.date = date
   } else {

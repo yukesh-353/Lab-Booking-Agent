@@ -12,8 +12,9 @@ const BCRYPT_ROUNDS = 10
 // ---- Secret (in production, set SESSION_SECRET env var) ----
 const SESSION_SECRET = process.env.SESSION_SECRET || 'labby-dev-session-secret-change-me-9f8e7c6d5b4a'
 
-// ---- In-memory session store: token -> { userId, expiresAt } ----
-const sessions = new Map<string, { userId: string; expiresAt: number }>()
+// ---- In-memory blocklist for logged-out tokens (so logout actually invalidates) ----
+// Note: this resets on server restart, which is acceptable — tokens also expire by time.
+const revokedTokens = new Set<string>()
 
 // ---- Captcha store: captchaId -> { answer, expiresAt } ----
 interface CaptchaChallenge {
@@ -58,13 +59,12 @@ export async function verifyPassword(plain: string, hash: string): Promise<boole
   return bcrypt.compare(plain, hash)
 }
 
-// ---- Session token create/verify ----
+// ---- Session token create/verify (stateless — signature is self-contained) ----
 export async function createSessionToken(userId: string): Promise<string> {
   const payload = { userId, iat: Date.now(), exp: Date.now() + SESSION_TTL_MS }
   const payloadStr = Buffer.from(JSON.stringify(payload)).toString('base64url')
   const sig = await hmacSign(payloadStr)
   const token = `${payloadStr}.${sig}`
-  sessions.set(token, { userId, expiresAt: payload.exp })
   return token
 }
 
@@ -77,16 +77,15 @@ export async function verifySessionToken(token: string | undefined | null): Prom
   const valid = await hmacVerify(payloadStr, sig)
   if (!valid) return null
 
+  // Check if revoked (logged out)
+  if (revokedTokens.has(token)) return null
+
   // Parse payload
   try {
     const payload = JSON.parse(Buffer.from(payloadStr, 'base64url').toString())
     if (Date.now() > payload.exp) {
-      sessions.delete(token)
       return null
     }
-    // Check in-memory store
-    const entry = sessions.get(token)
-    if (!entry || entry.userId !== payload.userId) return null
     return { userId: payload.userId }
   } catch {
     return null
@@ -94,7 +93,7 @@ export async function verifySessionToken(token: string | undefined | null): Prom
 }
 
 export function destroySession(token: string | undefined | null): void {
-  if (token) sessions.delete(token)
+  if (token) revokedTokens.add(token)
 }
 
 // ---- Cookie helpers ----

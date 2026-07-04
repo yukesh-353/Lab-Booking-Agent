@@ -1028,14 +1028,14 @@ function LabsPanel({ user }: { user: User }) {
     }
   }
 
-  if (user.role !== 'ADMIN' && user.role !== 'STAFF') {
+  if (user.role !== 'ADMIN') {
     return (
       <div className="p-4 max-w-5xl mx-auto">
         <Card>
           <CardContent className="py-12 text-center">
             <Shield className="w-10 h-10 mx-auto mb-3 text-muted-foreground/50" />
-            <p className="text-muted-foreground">Admin or staff access required.</p>
-            <p className="text-sm text-muted-foreground mt-1">Only STAFF and ADMIN roles can manage labs.</p>
+            <p className="text-muted-foreground">Admin access required.</p>
+            <p className="text-sm text-muted-foreground mt-1">Only ADMIN can add, edit, or delete labs.</p>
           </CardContent>
         </Card>
       </div>
@@ -1411,14 +1411,14 @@ function AdminPanel({ user }: { user: User }) {
     loadAllBookings()
   }, [loadAllBookings])
 
-  if (user.role !== 'ADMIN' && user.role !== 'STAFF') {
+  if (user.role !== 'ADMIN') {
     return (
       <div className="p-4 max-w-5xl mx-auto">
         <Card>
           <CardContent className="py-12 text-center">
             <Shield className="w-10 h-10 mx-auto mb-3 text-muted-foreground/50" />
             <p className="text-muted-foreground">Admin access required.</p>
-            <p className="text-sm text-muted-foreground mt-1">Only STAFF and ADMIN roles can view campus-wide stats.</p>
+            <p className="text-sm text-muted-foreground mt-1">Only ADMIN can view campus-wide stats.</p>
           </CardContent>
         </Card>
       </div>
@@ -1647,8 +1647,11 @@ export default function Home() {
     ADMIN: 'bg-emerald-100 text-emerald-700 dark:bg-emerald-950 dark:text-emerald-300',
   }[user.role]
 
-  const canSeeAdmin = user.role === 'ADMIN' || user.role === 'STAFF'
-  const canSeeLabs = user.role === 'ADMIN' || user.role === 'STAFF'
+  // Labs management (add/edit/delete labs) and Admin panel (campus-wide stats)
+  // are ADMIN-ONLY. Students, faculty, and staff all have the same booking
+  // capabilities: chat, book, view availability, manage own bookings.
+  const canSeeAdmin = user.role === 'ADMIN'
+  const canSeeLabs = user.role === 'ADMIN'
 
   return (
     <div className="min-h-screen flex flex-col bg-background">

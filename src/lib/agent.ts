@@ -87,9 +87,13 @@ You help users with these tasks:
 3. Create a booking for the current user (you receive a request like "book Lab A tomorrow 2-4pm"). The user can specify start and end times in 24h format (e.g. "14:00") or 12h format (e.g. "2pm" → "14:00").
 4. List the current user's upcoming bookings.
 5. Cancel one of the user's bookings by ID (always confirm the ID first by listing their bookings).
-6. List all bookings across all labs for a date (only STAFF/ADMIN).
-7. Add a new lab to the system (only ADMIN and STAFF). Required fields: name, location, capacity, openTime, closeTime. Optional: description, software, status (defaults to OPEN).
-8. Update an existing lab's details or status, e.g. set a lab to MAINTENANCE (only ADMIN and STAFF).
+6. List all bookings across all labs for a date (ADMIN only — students, faculty, and staff cannot do this).
+7. Add a new lab to the system (ADMIN only). Required fields: name, location, capacity, openTime, closeTime. Optional: description, software, status (defaults to OPEN).
+8. Update an existing lab's details or status, e.g. set a lab to MAINTENANCE (ADMIN only).
+
+PERMISSIONS SUMMARY
+- Students, faculty, and staff all have the same permissions: they can chat with you, book labs, check availability, and manage their own bookings.
+- Only admins can add labs, edit labs, view all bookings campus-wide, and view admin stats. If a non-admin requests any of these, politely explain the restriction.
 
 OUTPUT FORMAT — STRICT
 You MUST respond with a single JSON object on its own line. No markdown, no commentary outside the JSON.
@@ -112,7 +116,7 @@ RULES
 - For "book" actions, if the user did not specify purpose, set purpose to "General use".
 - If essential info is missing (lab, date, or time), respond with an "answer" action asking for the missing info.
 - If the user asks to cancel but did not specify which booking, first respond with list_my_bookings action.
-- Only STAFF and ADMIN can use "list_all_bookings", "add_lab", and "update_lab". If a non-admin/staff asks, respond with an "answer" explaining the restriction.
+- Only ADMIN can use "list_all_bookings", "add_lab", and "update_lab". If a non-admin asks, respond with an "answer" explaining the restriction.
 - For free-form chat (greetings, jokes, questions about lab policies), use "answer".
 - Never invent booking IDs. Only use IDs you would obtain from a list_my_bookings action.
 - Keep answers concise and friendly. Address the user by their first name when natural.
@@ -295,7 +299,7 @@ async function executeAction(action: AgentAction, ctx: AgentContext): Promise<st
 
     case 'list_all_bookings': {
       if (!canApproveBookings(user.role)) {
-        return `Sorry, only staff and admins can view all bookings campus-wide. Students and faculty can see their own bookings via "show my bookings".`
+        return `Sorry, only admins can view all bookings campus-wide. Students, faculty, and staff can see their own bookings via "show my bookings".`
       }
       const date = action.date || todayISO()
       const bookings = await db.booking.findMany({
@@ -314,7 +318,7 @@ async function executeAction(action: AgentAction, ctx: AgentContext): Promise<st
 
     case 'add_lab': {
       if (!canManageLabs(user.role)) {
-        return `Sorry, only admins and staff can add new labs. As a ${user.role.toLowerCase()}, you can book existing labs or check their availability.`
+        return `Sorry, only admins can add new labs. As a ${user.role.toLowerCase()}, you can book existing labs or check their availability. If you need a new lab added, please contact an administrator.`
       }
       const { name, location, capacity, openTime, closeTime, status, description, software } = action
       if (!name || !location || capacity === undefined || !openTime || !closeTime) {
@@ -341,7 +345,7 @@ async function executeAction(action: AgentAction, ctx: AgentContext): Promise<st
 
     case 'update_lab': {
       if (!canManageLabs(user.role)) {
-        return `Sorry, only admins and staff can update lab details. As a ${user.role.toLowerCase()}, you can book existing labs or check their availability.`
+        return `Sorry, only admins can update lab details. As a ${user.role.toLowerCase()}, you can book existing labs or check their availability. If a lab needs updating, please contact an administrator.`
       }
       const lab = await resolveLab(action.lab)
       if (!lab) {
