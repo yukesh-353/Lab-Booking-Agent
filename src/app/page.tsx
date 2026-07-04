@@ -141,9 +141,10 @@ function timeToMinutesLocal(t: string): number {
 
 // Auth-aware fetch wrapper: if any API call returns 401, dispatch a global event
 // that logs the user out and shows the login screen.
+// Skip the event for /api/auth/* endpoints — those handle their own 401s.
 async function apiFetch(url: string, options?: RequestInit): Promise<Response> {
   const res = await fetch(url, options)
-  if (res.status === 401) {
+  if (res.status === 401 && !url.startsWith('/api/auth/')) {
     window.dispatchEvent(new Event('labby-unauthorized'))
   }
   return res
@@ -222,8 +223,18 @@ function LoginForm({ onLogin, toast }: { onLogin: (u: User) => void; toast: any 
       })
       const data = await res.json()
       if (!res.ok) throw new Error(data.error || 'Login failed')
-      saveUser(data.user)
-      onLogin(data.user)
+      // Verify the session cookie was actually set by calling /api/auth/me
+      // This ensures the cookie is valid before we transition to the app.
+      const meRes = await fetch('/api/auth/me')
+      if (meRes.ok) {
+        const meData = await meRes.json()
+        saveUser(meData.user)
+        onLogin(meData.user)
+      } else {
+        // Cookie didn't set — fall back to the login response user
+        saveUser(data.user)
+        onLogin(data.user)
+      }
     } catch (e: any) {
       toast({ title: 'Login failed', description: e.message, variant: 'destructive' })
     } finally {
@@ -1567,9 +1578,11 @@ export default function Home() {
     // This prevents the race condition where a stale localStorage cache shows the
     // user as logged in, but the session cookie is invalid (e.g. after a DB reset)
     // — which would cause 401 errors on every API call.
+    let cancelled = false
     const id = setTimeout(async () => {
       try {
         const res = await fetch('/api/auth/me')
+        if (cancelled) return
         if (res.ok) {
           const data = await res.json()
           if (data.user) {
@@ -1577,30 +1590,38 @@ export default function Home() {
             setUser(data.user)
           }
         } else {
-          // Session invalid/expired — clear any stale cache
+          // Session invalid/expired — clear any stale cache.
+          // Do NOT dispatch labby-unauthorized here; this is the initial check,
+          // not a mid-session expiry. Just clear state silently.
           saveUser(null)
-          setUser(null)
         }
       } catch {
+        if (cancelled) return
         // Network error — try the cached user as a fallback (offline mode)
         const cached = loadUser()
         if (cached) setUser(cached)
       }
-      setLoading(false)
+      if (!cancelled) setLoading(false)
     }, 0)
-    return () => clearTimeout(id)
+    return () => { cancelled = true; clearTimeout(id) }
   }, [])
 
-  // Global 401 handler: if any API call returns 401, log out and show login.
-  // This catches stale sessions that expire while the user is using the app.
+  // Global 401 handler: if any API call returns 401 AFTER the initial load,
+  // log out and show login. This catches stale sessions that expire while
+  // the user is using the app. We skip this during the initial loading phase
+  // to avoid racing with the /api/auth/me check above.
   useEffect(() => {
     const handle401 = () => {
-      saveUser(null)
-      setUser(null)
+      // Only react to 401 if we're past the initial loading screen.
+      // During initial load, the /api/auth/me check handles auth state.
+      if (!loading) {
+        saveUser(null)
+        setUser(null)
+      }
     }
     window.addEventListener('labby-unauthorized', handle401)
     return () => window.removeEventListener('labby-unauthorized', handle401)
-  }, [])
+  }, [loading])
 
   // Loading state — matches what the server renders, so no hydration mismatch
   if (loading) {
