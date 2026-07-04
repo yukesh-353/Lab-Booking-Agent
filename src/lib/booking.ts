@@ -47,6 +47,43 @@ export const generateTimeOptions = (openTime: string, closeTime: string): string
   return options
 }
 
+// Current local time in HH:mm 24h format
+export const currentTimeStr = (): string => {
+  const d = new Date()
+  return `${String(d.getHours()).padStart(2, '0')}:${String(d.getMinutes()).padStart(2, '0')}`
+}
+
+// Live status of a lab right now — is it available, booked right now, closed, or under maintenance?
+export type LiveStatus = 'AVAILABLE' | 'BOOKED_NOW' | 'CLOSED' | 'MAINTENANCE' | 'OUTSIDE_HOURS'
+
+// Given a lab + its bookings for today, compute the live status at the current moment
+export const computeLiveStatus = (
+  lab: { status: string; openTime: string; closeTime: string },
+  bookingsToday: { startTime: string; endTime: string; status: string }[],
+  now: { date: string; time: string } = { date: todayISO(), time: currentTimeStr() },
+): { status: LiveStatus; activeBooking?: { startTime: string; endTime: string } } => {
+  if (lab.status === 'MAINTENANCE') return { status: 'MAINTENANCE' }
+  if (lab.status === 'CLOSED') return { status: 'CLOSED' }
+
+  const nowM = timeToMinutes(now.time)
+  // Outside open hours
+  if (nowM < timeToMinutes(lab.openTime) || nowM >= timeToMinutes(lab.closeTime)) {
+    return { status: 'OUTSIDE_HOURS' }
+  }
+
+  // Check for an active confirmed booking right now: startTime <= now < endTime
+  const active = bookingsToday.find(
+    (b) =>
+      b.status === 'CONFIRMED' &&
+      timeToMinutes(b.startTime) <= nowM &&
+      nowM < timeToMinutes(b.endTime),
+  )
+  if (active) {
+    return { status: 'BOOKED_NOW', activeBooking: { startTime: active.startTime, endTime: active.endTime } }
+  }
+  return { status: 'AVAILABLE' }
+}
+
 // Conflict check — does [startA, endA) overlap [startB, endB)?
 export const overlaps = (startA: string, endA: string, startB: string, endB: string): boolean => {
   return timeToMinutes(startA) < timeToMinutes(endB) && timeToMinutes(startB) < timeToMinutes(endA)

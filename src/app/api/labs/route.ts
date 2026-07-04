@@ -1,14 +1,41 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { db } from '@/lib/db'
-import { canManageLabs, validateLab, MAX_PURPOSE_LENGTH } from '@/lib/booking'
+import { canManageLabs, validateLab, MAX_PURPOSE_LENGTH, computeLiveStatus, todayISO } from '@/lib/booking'
 
-// GET /api/labs — list all labs (public for logged-in users)
+// GET /api/labs — list all labs with their live status (available now / booked now / closed)
 export async function GET(_req: NextRequest) {
+  const today = todayISO()
   const labs = await db.lab.findMany({
     orderBy: { name: 'asc' },
-    include: { _count: { select: { bookings: { where: { status: 'CONFIRMED' } } } } },
+    include: {
+      bookings: {
+        where: { date: today, status: { in: ['CONFIRMED', 'PENDING'] } },
+        select: { startTime: true, endTime: true, status: true, purpose: true, userId: true, user: { select: { name: true } } },
+      },
+    },
   })
-  return NextResponse.json({ labs })
+
+  // Compute live status for each lab
+  const labsWithStatus = labs.map((l) => {
+    const live = computeLiveStatus(l, l.bookings)
+    return {
+      ...l,
+      bookings: undefined, // don't leak all bookings in the list endpoint
+      _count: { bookings: l.bookings.length },
+      liveStatus: live.status,
+      activeBooking: live.activeBooking
+        ? {
+            startTime: live.activeBooking.startTime,
+            endTime: live.activeBooking.endTime,
+            bookerName: l.bookings.find(
+              (b) => b.startTime === live.activeBooking!.startTime && b.endTime === live.activeBooking!.endTime,
+            )?.user?.name,
+          }
+        : null,
+    }
+  })
+
+  return NextResponse.json({ labs: labsWithStatus, date: today })
 }
 
 // POST /api/labs — create a new lab (ADMIN or STAFF only)

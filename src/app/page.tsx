@@ -16,7 +16,7 @@ import { Textarea } from '@/components/ui/textarea'
 import {
   Bot, Send, Calendar as CalendarIcon, LayoutDashboard, Shield, LogOut, Loader2, User,
   Clock, MapPin, Users, Monitor, CheckCircle2, XCircle, CalendarDays, Sparkles, History,
-  Plus, Pencil, FlaskConical, Trash2,
+  Plus, Pencil, FlaskConical, Trash2, AlertCircle,
 } from 'lucide-react'
 import { useToast } from '@/hooks/use-toast'
 import { format } from 'date-fns'
@@ -30,6 +30,7 @@ interface User {
   role: 'STUDENT' | 'FACULTY' | 'STAFF' | 'ADMIN'
   department?: string | null
 }
+type LiveStatus = 'AVAILABLE' | 'BOOKED_NOW' | 'CLOSED' | 'MAINTENANCE' | 'OUTSIDE_HOURS'
 interface Lab {
   id: string
   name: string
@@ -40,6 +41,9 @@ interface Lab {
   closeTime: string
   status: 'OPEN' | 'CLOSED' | 'MAINTENANCE'
   software?: string | null
+  // Live status fields (from /api/labs)
+  liveStatus?: LiveStatus
+  activeBooking?: { startTime: string; endTime: string; bookerName?: string } | null
 }
 interface Slot {
   start: string
@@ -90,6 +94,50 @@ const QUICK_PROMPTS = [
   'Book Lab B tomorrow 2-4pm for ML project',
   'Show my bookings',
 ]
+
+// ---------- Live status badge ----------
+function liveStatusConfig(status?: LiveStatus, activeBooking?: { startTime: string; endTime: string; bookerName?: string } | null) {
+  switch (status) {
+    case 'AVAILABLE':
+      return { label: 'Available now', cls: 'bg-emerald-600 hover:bg-emerald-700 text-white', icon: CheckCircle2 }
+    case 'BOOKED_NOW':
+      return { label: activeBooking ? `Booked until ${activeBooking.endTime}` : 'Booked now', cls: 'bg-red-500 hover:bg-red-600 text-white', icon: XCircle }
+    case 'OUTSIDE_HOURS':
+      return { label: 'Outside hours', cls: 'bg-slate-400 hover:bg-slate-500 text-white', icon: Clock }
+    case 'MAINTENANCE':
+      return { label: 'Maintenance', cls: 'bg-amber-500 hover:bg-amber-600 text-white', icon: AlertCircle }
+    case 'CLOSED':
+      return { label: 'Closed', cls: 'bg-slate-500 hover:bg-slate-600 text-white', icon: XCircle }
+    default:
+      return { label: 'Unknown', cls: 'bg-slate-400 hover:bg-slate-500 text-white', icon: AlertCircle }
+  }
+}
+
+function LiveStatusBadge({ status, activeBooking, className = '' }: { status?: LiveStatus; activeBooking?: { startTime: string; endTime: string; bookerName?: string } | null; className?: string }) {
+  const cfg = liveStatusConfig(status, activeBooking)
+  const Icon = cfg.icon
+  return (
+    <Badge variant="default" className={`text-[10px] ${cfg.cls} ${className}`}>
+      <Icon className="w-3 h-3 mr-1" />
+      {cfg.label}
+    </Badge>
+  )
+}
+
+// Hook: re-render every `intervalMs` milliseconds so time-based UI stays fresh
+function useTick(intervalMs = 60000) {
+  const [, setTick] = useState(0)
+  useEffect(() => {
+    const id = setInterval(() => setTick((t) => t + 1), intervalMs)
+    return () => clearInterval(id)
+  }, [intervalMs])
+}
+
+// Convert "HH:mm" to minutes since midnight (local)
+function timeToMinutesLocal(t: string): number {
+  const [h, m] = t.split(':').map(Number)
+  return h * 60 + m
+}
 
 // ---------- Login screen ----------
 function LoginScreen({ onLogin }: { onLogin: (u: User) => void }) {
@@ -397,10 +445,11 @@ function renderInline(text: string) {
 function CalendarPanel({ user }: { user: User }) {
   const [labs, setLabs] = useState<Lab[]>([])
   const [selectedLab, setSelectedLab] = useState<string>('')
-  const [selectedDate, setSelectedDate] = useState<string>(new Date().toISOString().slice(0, 10))
+  const [selectedDate, setSelectedDate] = useState<string>(new Date().toLocaleDateString('sv-SE'))
   const [slots, setSlots] = useState<Slot[]>([])
   const [loading, setLoading] = useState(false)
   const { toast } = useToast()
+  useTick(30000) // re-render every 30s so the "NOW" highlight follows the current time
 
   useEffect(() => {
     fetch('/api/labs')
@@ -484,26 +533,45 @@ function CalendarPanel({ user }: { user: User }) {
               {!loading && slots.length === 0 && (
                 <div className="text-sm text-muted-foreground py-8 text-center">Lab is closed or unavailable on this date.</div>
               )}
-              {slots.map((s, i) => (
-                <div
-                  key={i}
-                  className={`flex items-center justify-between rounded-md border px-3 py-2 text-sm ${
-                    s.booked ? 'border-red-200 bg-red-50 dark:border-red-900/50 dark:bg-red-950/30' : 'border-emerald-200 bg-emerald-50 dark:border-emerald-900/50 dark:bg-emerald-950/30'
-                  }`}
-                >
-                  <div className="flex items-center gap-2">
-                    <Clock className="w-3.5 h-3.5 text-muted-foreground" />
-                    <span className="font-mono">{s.start} – {s.end}</span>
+              {slots.map((s, i) => {
+                // Highlight the slot that contains "now" if viewing today's schedule
+                const nowM = new Date().getHours() * 60 + new Date().getMinutes()
+                const isToday = selectedDate === new Date().toLocaleDateString('sv-SE')
+                const isNowSlot = isToday && nowM >= timeToMinutesLocal(s.start) && nowM < timeToMinutesLocal(s.end)
+                const isPastSlot = isToday && nowM >= timeToMinutesLocal(s.end)
+                return (
+                  <div
+                    key={i}
+                    className={`flex items-center justify-between rounded-md border px-3 py-2 text-sm transition-colors ${
+                      isNowSlot
+                        ? 'border-blue-400 bg-blue-50 dark:border-blue-700 dark:bg-blue-950/40 ring-1 ring-blue-400'
+                        : isPastSlot
+                        ? 'opacity-50 ' + (s.booked ? 'border-red-200 bg-red-50 dark:border-red-900/50 dark:bg-red-950/30' : 'border-emerald-200 bg-emerald-50 dark:border-emerald-900/50 dark:bg-emerald-950/30')
+                        : s.booked ? 'border-red-200 bg-red-50 dark:border-red-900/50 dark:bg-red-950/30' : 'border-emerald-200 bg-emerald-50 dark:border-emerald-900/50 dark:bg-emerald-950/30'
+                    }`}
+                  >
+                    <div className="flex items-center gap-2">
+                      <Clock className="w-3.5 h-3.5 text-muted-foreground" />
+                      <span className="font-mono">{s.start} – {s.end}</span>
+                      {isNowSlot && (
+                        <Badge variant="default" className="text-[10px] bg-blue-500 hover:bg-blue-600 text-white ml-1">
+                          <span className="w-1.5 h-1.5 rounded-full bg-white animate-pulse mr-1" /> NOW
+                        </Badge>
+                      )}
+                      {isPastSlot && !isNowSlot && (
+                        <span className="text-[10px] text-muted-foreground">past</span>
+                      )}
+                    </div>
+                    {s.booked ? (
+                      <Badge variant="destructive" className="text-xs">
+                        Booked{s.bookerName ? ` · ${s.bookerName}` : ''}{s.purpose ? ` · ${s.purpose}` : ''}
+                      </Badge>
+                    ) : (
+                      <Badge variant="default" className="text-xs bg-emerald-600 hover:bg-emerald-700">Free</Badge>
+                    )}
                   </div>
-                  {s.booked ? (
-                    <Badge variant="destructive" className="text-xs">
-                      Booked{s.bookerName ? ` · ${s.bookerName}` : ''}{s.purpose ? ` · ${s.purpose}` : ''}
-                    </Badge>
-                  ) : (
-                    <Badge variant="default" className="text-xs bg-emerald-600 hover:bg-emerald-700">Free</Badge>
-                  )}
-                </div>
-              ))}
+                )
+              })}
             </div>
           </div>
 
@@ -529,19 +597,27 @@ function BookPanel({ user }: { user: User }) {
   const [submitting, setSubmitting] = useState(false)
   const [slots, setSlots] = useState<Slot[]>([])
   const { toast } = useToast()
-
   const todayStr = new Date().toLocaleDateString('sv-SE')
 
-  useEffect(() => {
-    fetch('/api/labs')
-      .then((r) => r.json())
-      .then((d) => {
-        const openLabs = (d.labs || []).filter((l: Lab) => l.status === 'OPEN')
-        setLabs(openLabs)
-        if (openLabs.length) setSelectedLabId(openLabs[0].id)
-      })
-      .catch((e: any) => toast({ title: 'Failed to load labs', description: e.message, variant: 'destructive' }))
+  // Re-fetch labs every 60s so live status updates as bookings start/end
+  const loadLabs = useCallback(async () => {
+    try {
+      const res = await fetch('/api/labs')
+      const data = await res.json()
+      if (!res.ok) throw new Error(data.error)
+      const openLabs = (data.labs || []).filter((l: Lab) => l.status === 'OPEN')
+      setLabs(openLabs)
+      setSelectedLabId((prev) => prev && openLabs.some((l: Lab) => l.id === prev) ? prev : (openLabs[0]?.id || ''))
+    } catch (e: any) {
+      toast({ title: 'Failed to load labs', description: e.message, variant: 'destructive' })
+    }
   }, [toast])
+
+  useEffect(() => {
+    loadLabs()
+    const id = setInterval(loadLabs, 60000) // refresh live status every 60s
+    return () => clearInterval(id)
+  }, [loadLabs])
 
   const selectedLab = labs.find((l) => l.id === selectedLabId)
 
@@ -625,27 +701,53 @@ function BookPanel({ user }: { user: User }) {
           <CardDescription>Pick a lab, date, and time slot. Conflicts are checked automatically.</CardDescription>
         </CardHeader>
         <CardContent className="space-y-4">
-          {/* Lab select */}
+          {/* Lab select with live status */}
           <div className="space-y-1.5">
-            <Label htmlFor="book-lab">Lab</Label>
+            <div className="flex items-center justify-between">
+              <Label htmlFor="book-lab">Lab</Label>
+              <span className="text-[10px] text-muted-foreground flex items-center gap-1">
+                <span className="w-1.5 h-1.5 rounded-full bg-emerald-500 animate-pulse" /> Live status
+              </span>
+            </div>
             <Select value={selectedLabId} onValueChange={setSelectedLabId}>
               <SelectTrigger><SelectValue placeholder="Select a lab" /></SelectTrigger>
               <SelectContent>
                 {labs.map((l) => (
-                  <SelectItem key={l.id} value={l.id}>{l.name}</SelectItem>
+                  <SelectItem key={l.id} value={l.id}>
+                    <div className="flex items-center gap-2 w-full">
+                      <span className="truncate">{l.name}</span>
+                      <LiveStatusBadge status={l.liveStatus} activeBooking={l.activeBooking} className="ml-auto" />
+                    </div>
+                  </SelectItem>
                 ))}
               </SelectContent>
             </Select>
           </div>
 
           {selectedLab && (
-            <div className="rounded-lg border bg-muted/30 p-3 text-xs text-muted-foreground">
-              <div className="grid grid-cols-2 sm:grid-cols-4 gap-2">
+            <div className="rounded-lg border bg-muted/30 p-3 space-y-2">
+              <div className="flex items-center justify-between gap-2">
+                <span className="text-xs font-medium">Live status</span>
+                <LiveStatusBadge status={selectedLab.liveStatus} activeBooking={selectedLab.activeBooking} />
+              </div>
+              <div className="grid grid-cols-2 sm:grid-cols-4 gap-2 text-xs text-muted-foreground">
                 <span className="flex items-center gap-1"><MapPin className="w-3 h-3" /> {selectedLab.location}</span>
                 <span className="flex items-center gap-1"><Users className="w-3 h-3" /> {selectedLab.capacity} seats</span>
                 <span className="flex items-center gap-1"><Clock className="w-3 h-3" /> {selectedLab.openTime}–{selectedLab.closeTime}</span>
                 <span className="flex items-center gap-1"><Monitor className="w-3 h-3" /> {selectedLab.software?.split(',')[0] || 'Standard'}</span>
               </div>
+              {selectedLab.liveStatus === 'BOOKED_NOW' && selectedLab.activeBooking && (
+                <div className="text-[11px] text-red-600 dark:text-red-400 flex items-center gap-1 pt-1 border-t">
+                  <AlertCircle className="w-3 h-3" />
+                  Currently in use{selectedLab.activeBooking.bookerName ? ` by ${selectedLab.activeBooking.bookerName}` : ''} until {selectedLab.activeBooking.endTime}. It'll be available again after that.
+                </div>
+              )}
+              {selectedLab.liveStatus === 'AVAILABLE' && (
+                <div className="text-[11px] text-emerald-600 dark:text-emerald-400 flex items-center gap-1 pt-1 border-t">
+                  <CheckCircle2 className="w-3 h-3" />
+                  Free right now — pick any available time slot below.
+                </div>
+              )}
             </div>
           )}
 
@@ -738,7 +840,11 @@ function LabsPanel({ user }: { user: User }) {
     }
   }, [toast])
 
-  useEffect(() => { load() }, [load])
+  useEffect(() => {
+    load()
+    const id = setInterval(load, 60000) // refresh live status every 60s
+    return () => clearInterval(id)
+  }, [load])
 
   const setLabStatus = async (lab: Lab, status: 'OPEN' | 'CLOSED' | 'MAINTENANCE') => {
     try {
@@ -819,6 +925,7 @@ function LabsPanel({ user }: { user: User }) {
                     <div className="flex items-center gap-2 flex-wrap">
                       <span className="font-medium text-sm truncate">{lab.name}</span>
                       {statusBadge(lab.status)}
+                      <LiveStatusBadge status={lab.liveStatus} activeBooking={lab.activeBooking} />
                     </div>
                     <div className="text-xs text-muted-foreground mt-1 flex items-center gap-3 flex-wrap">
                       <span className="flex items-center gap-1"><MapPin className="w-3 h-3" /> {lab.location}</span>
@@ -826,6 +933,11 @@ function LabsPanel({ user }: { user: User }) {
                       <span className="flex items-center gap-1"><Clock className="w-3 h-3" /> {lab.openTime}–{lab.closeTime}</span>
                     </div>
                     {lab.software && <div className="text-[11px] text-muted-foreground mt-0.5 truncate">Software: {lab.software}</div>}
+                    {lab.liveStatus === 'BOOKED_NOW' && lab.activeBooking && (
+                      <div className="text-[11px] text-red-600 dark:text-red-400 mt-0.5">
+                        In session{lab.activeBooking.bookerName ? ` — ${lab.activeBooking.bookerName}` : ''} ({lab.activeBooking.startTime}–{lab.activeBooking.endTime})
+                      </div>
+                    )}
                   </div>
                   <div className="flex items-center gap-1 shrink-0">
                     {/* Quick status toggle */}
