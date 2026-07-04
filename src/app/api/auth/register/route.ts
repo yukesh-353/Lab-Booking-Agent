@@ -47,7 +47,7 @@ export async function POST(req: NextRequest) {
   if (!captchaId || captchaAnswer === undefined || captchaAnswer === null) {
     return NextResponse.json({ error: 'Captcha verification is required.' }, { status: 400 })
   }
-  const captchaOk = verifyCaptcha(String(captchaId), String(captchaAnswer))
+  const captchaOk = await verifyCaptcha(String(captchaId), String(captchaAnswer))
   if (!captchaOk) {
     return NextResponse.json({ error: 'Captcha verification failed. Please try again.' }, { status: 400 })
   }

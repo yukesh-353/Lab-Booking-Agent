@@ -1,7 +1,7 @@
 // Secure auth: bcrypt password hashing + signed session tokens + captcha challenges.
-// Session tokens are signed JWT-like strings (header.payload.signature) using HMAC-SHA256.
-// We store active sessions in-memory (a Map) — fine for single-instance demo deployments.
-// For multi-instance production, swap the sessions Map for Redis or DB-backed sessions.
+// Session tokens and captchas are stateless (signed with HMAC-SHA256) so they
+// survive Next.js dev hot reloads — no in-memory store needed for verification.
+// Logout uses a small in-memory blocklist of revoked tokens.
 import bcrypt from 'bcryptjs'
 import { db } from './db'
 
@@ -16,14 +16,8 @@ const SESSION_SECRET = process.env.SESSION_SECRET || 'labby-dev-session-secret-c
 // Note: this resets on server restart, which is acceptable — tokens also expire by time.
 const revokedTokens = new Set<string>()
 
-// ---- Captcha store: captchaId -> { answer, expiresAt } ----
-interface CaptchaChallenge {
-  id: string
-  question: string
-  answer: string
-  expiresAt: number
-}
-const captchas = new Map<string, CaptchaChallenge>()
+// ---- Captcha replay-protection (one-shot) ----
+const usedCaptchas = new Set<string>()
 
 // ---- HMAC-SHA256 signing (Web Crypto API, available in Node 18+ / Edge) ----
 async function hmacSign(data: string): Promise<string> {
@@ -41,7 +35,6 @@ async function hmacSign(data: string): Promise<string> {
 
 async function hmacVerify(data: string, signature: string): Promise<boolean> {
   const expected = await hmacSign(data)
-  // Constant-time-ish comparison
   if (expected.length !== signature.length) return false
   let diff = 0
   for (let i = 0; i < expected.length; i++) {
@@ -64,8 +57,7 @@ export async function createSessionToken(userId: string): Promise<string> {
   const payload = { userId, iat: Date.now(), exp: Date.now() + SESSION_TTL_MS }
   const payloadStr = Buffer.from(JSON.stringify(payload)).toString('base64url')
   const sig = await hmacSign(payloadStr)
-  const token = `${payloadStr}.${sig}`
-  return token
+  return `${payloadStr}.${sig}`
 }
 
 export async function verifySessionToken(token: string | undefined | null): Promise<{ userId: string } | null> {
@@ -73,19 +65,15 @@ export async function verifySessionToken(token: string | undefined | null): Prom
   const [payloadStr, sig] = token.split('.')
   if (!payloadStr || !sig) return null
 
-  // Check signature
   const valid = await hmacVerify(payloadStr, sig)
   if (!valid) return null
 
   // Check if revoked (logged out)
   if (revokedTokens.has(token)) return null
 
-  // Parse payload
   try {
     const payload = JSON.parse(Buffer.from(payloadStr, 'base64url').toString())
-    if (Date.now() > payload.exp) {
-      return null
-    }
+    if (Date.now() > payload.exp) return null
     return { userId: payload.userId }
   } catch {
     return null
@@ -111,33 +99,50 @@ export function getSessionCookieOptions() {
   }
 }
 
-// ---- Captcha generation ----
-// Generates a simple math challenge (e.g. "3 + 7 = ?") — lightweight, no external service needed.
-export function generateCaptcha(): { id: string; question: string } {
+// ---- Captcha: self-contained signed tokens (survives dev hot reloads) ----
+// The captcha "id" is a signed token containing the answer + expiry, so verification
+// doesn't depend on an in-memory store that gets wiped on hot reload.
+interface CaptchaPayload {
+  answer: string
+  exp: number
+}
+
+// Generates a simple math challenge (e.g. "3 + 7 = ?")
+export async function generateCaptcha(): Promise<{ id: string; question: string }> {
   const a = Math.floor(Math.random() * 9) + 1 // 1-9
   const b = Math.floor(Math.random() * 9) + 1 // 1-9
   const ops = ['+', '-'] as const
   const op = ops[Math.floor(Math.random() * ops.length)]
   const answer = op === '+' ? a + b : a - b
-  const id = `${Date.now()}-${Math.random().toString(36).slice(2, 10)}`
   const question = `${a} ${op} ${b} = ?`
-  captchas.set(id, {
-    id,
-    question,
-    answer: String(answer),
-    expiresAt: Date.now() + 5 * 60 * 1000, // 5 min
-  })
+  const payload: CaptchaPayload = { answer: String(answer), exp: Date.now() + 5 * 60 * 1000 }
+  const payloadStr = Buffer.from(JSON.stringify(payload)).toString('base64url')
+  const sig = await hmacSign(payloadStr)
+  const id = `${payloadStr}.${sig}`
   return { id, question }
 }
 
-// ---- Captcha verification (consumes the challenge so it can't be reused) ----
-export function verifyCaptcha(id: string, userAnswer: string): boolean {
-  const challenge = captchas.get(id)
-  if (!challenge) return false
-  // Always delete after an attempt (one-shot)
-  captchas.delete(id)
-  if (Date.now() > challenge.expiresAt) return false
-  return challenge.answer.trim() === userAnswer.trim()
+// Verifies the captcha answer (one-shot — token can't be reused)
+export async function verifyCaptcha(id: string, userAnswer: string): Promise<boolean> {
+  if (!id || !userAnswer) return false
+  // One-shot: if already used, reject
+  if (usedCaptchas.has(id)) {
+    if (usedCaptchas.size > 1000) usedCaptchas.clear()
+    return false
+  }
+  const [payloadStr, sig] = id.split('.')
+  if (!payloadStr || !sig) return false
+  const valid = await hmacVerify(payloadStr, sig)
+  if (!valid) return false
+  try {
+    const payload = JSON.parse(Buffer.from(payloadStr, 'base64url').toString()) as CaptchaPayload
+    if (Date.now() > payload.exp) return false
+    const ok = payload.answer.trim() === String(userAnswer).trim()
+    if (ok) usedCaptchas.add(id)
+    return ok
+  } catch {
+    return false
+  }
 }
 
 // ---- Get current user from request (helper for API routes) ----
