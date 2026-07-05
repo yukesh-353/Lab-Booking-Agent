@@ -663,8 +663,39 @@ export default function Home() {
   const [tab, setTab] = useState('chat')
 
   useEffect(() => {
-    const id = setTimeout(() => { setUser(loadUser()); setLoading(false) }, 0)
-    return () => clearTimeout(id)
+    // Load cached user, then refresh from server using email (which is stable
+    // across DB re-seeds) so the user ID is always current.
+    const cached = loadUser()
+
+    let cancelled = false
+    const id = setTimeout(async () => {
+      if (!cached) {
+        if (!cancelled) setLoading(false)
+        return
+      }
+      try {
+        const res = await fetch(`/api/session?email=${encodeURIComponent(cached.email)}`)
+        if (cancelled) return
+        if (res.ok) {
+          const data = await res.json()
+          if (data.user) {
+            saveUser(data.user)
+            setUser(data.user)
+          } else {
+            saveUser(null)
+            setUser(null)
+          }
+        } else {
+          saveUser(null)
+          setUser(null)
+        }
+      } catch {
+        if (cancelled) return
+        setUser(cached)
+      }
+      if (!cancelled) setLoading(false)
+    }, 0)
+    return () => { cancelled = true; clearTimeout(id) }
   }, [])
 
   if (loading) {
