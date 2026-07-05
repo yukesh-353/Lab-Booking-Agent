@@ -14,7 +14,7 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@
 import {
   Bot, Send, Calendar as CalendarIcon, LayoutDashboard, Shield, LogOut, Loader2, User,
   Clock, MapPin, Users, Monitor, CheckCircle2, XCircle, CalendarDays, Sparkles, History,
-  Plus, Pencil, FlaskConical, Trash2,
+  Plus, Pencil, FlaskConical, Trash2, LogIn, UserPlus,
 } from 'lucide-react'
 import { useToast } from '@/hooks/use-toast'
 import { format } from 'date-fns'
@@ -89,7 +89,7 @@ const QUICK_PROMPTS = [
 
 // ---------- Login screen ----------
 function LoginScreen({ onLogin }: { onLogin: (u: User) => void }) {
-  const [mode, setMode] = useState<'demo' | 'custom'>('demo')
+  const [mode, setMode] = useState<'login' | 'register'>('login')
   const [name, setName] = useState('')
   const [email, setEmail] = useState('')
   const [role, setRole] = useState<'STUDENT' | 'FACULTY' | 'STAFF' | 'ADMIN'>('STUDENT')
@@ -104,10 +104,25 @@ function LoginScreen({ onLogin }: { onLogin: (u: User) => void }) {
     { email: 'admin@campus.edu', label: 'Admin Wang · Admin · IT Services' },
   ]
 
-  const loginDemo = async (email: string) => {
+  // Login existing user by email (no password — consistent with demo auth model)
+  const loginExisting = async () => {
+    if (!email.trim()) { toast({ title: 'Email is required', variant: 'destructive' }); return }
     setLoading(true)
     try {
-      const res = await fetch(`/api/session?email=${encodeURIComponent(email)}`)
+      const res = await fetch(`/api/session?email=${encodeURIComponent(email.trim())}`)
+      const data = await res.json()
+      if (!res.ok) throw new Error(data.error || 'User not found')
+      saveUser(data.user)
+      onLogin(data.user)
+    } catch (e: any) { toast({ title: 'Login failed', description: e.message, variant: 'destructive' }) }
+    finally { setLoading(false) }
+  }
+
+  // Quick-login a demo account
+  const loginDemo = async (demoEmail: string) => {
+    setLoading(true)
+    try {
+      const res = await fetch(`/api/session?email=${encodeURIComponent(demoEmail)}`)
       const data = await res.json()
       if (!res.ok) throw new Error(data.error || 'Login failed')
       saveUser(data.user)
@@ -116,16 +131,17 @@ function LoginScreen({ onLogin }: { onLogin: (u: User) => void }) {
     finally { setLoading(false) }
   }
 
-  const loginCustom = async () => {
+  // Register a new user
+  const register = async () => {
     if (!name.trim() || !email.trim()) { toast({ title: 'Name and email are required', variant: 'destructive' }); return }
     setLoading(true)
     try {
       const res = await fetch('/api/session', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ email: email.trim(), name: name.trim(), role, department: department.trim() || undefined }) })
       const data = await res.json()
-      if (!res.ok) throw new Error(data.error || 'Login failed')
+      if (!res.ok) throw new Error(data.error || 'Registration failed')
       saveUser(data.user)
       onLogin(data.user)
-    } catch (e: any) { toast({ title: 'Login failed', description: e.message, variant: 'destructive' }) }
+    } catch (e: any) { toast({ title: 'Registration failed', description: e.message, variant: 'destructive' }) }
     finally { setLoading(false) }
   }
 
@@ -140,28 +156,49 @@ function LoginScreen({ onLogin }: { onLogin: (u: User) => void }) {
         </div>
         <Card>
           <CardHeader>
-            <CardTitle className="text-lg">Sign in to continue</CardTitle>
-            <CardDescription>Pick a demo account or create your own</CardDescription>
+            <CardTitle className="text-lg">Welcome</CardTitle>
+            <CardDescription>Log in with your email or create a new account</CardDescription>
           </CardHeader>
           <CardContent className="space-y-4">
-            <Tabs value={mode} onValueChange={(v) => setMode(v as 'demo' | 'custom')}>
-              <TabsList className="grid w-full grid-cols-2"><TabsTrigger value="demo">Demo accounts</TabsTrigger><TabsTrigger value="custom">Custom</TabsTrigger></TabsList>
-              <TabsContent value="demo" className="space-y-2 pt-4">
-                {demoUsers.map((u) => (
-                  <Button key={u.email} variant="outline" className="w-full justify-start text-left h-auto py-3" disabled={loading} onClick={() => loginDemo(u.email)}>
-                    <User className="w-4 h-4 mr-3 shrink-0" /><span className="text-sm">{u.label}</span>
-                  </Button>
-                ))}
-              </TabsContent>
-              <TabsContent value="custom" className="space-y-3 pt-4">
-                <div className="space-y-1.5"><Label htmlFor="name">Name</Label><Input id="name" value={name} onChange={(e) => setName(e.target.value)} placeholder="Jane Doe" /></div>
-                <div className="space-y-1.5"><Label htmlFor="email">Email</Label><Input id="email" type="email" value={email} onChange={(e) => setEmail(e.target.value)} placeholder="jane@campus.edu" /></div>
+            <Tabs value={mode} onValueChange={(v) => { setMode(v as 'login' | 'register'); setEmail(''); setName(''); setDepartment('') }}>
+              <TabsList className="grid w-full grid-cols-2"><TabsTrigger value="login">Login</TabsTrigger><TabsTrigger value="register">Sign up</TabsTrigger></TabsList>
+
+              {/* LOGIN TAB — for existing users */}
+              <TabsContent value="login" className="space-y-3 pt-4">
                 <div className="space-y-1.5">
-                  <Label htmlFor="role">Role</Label>
-                  <Select value={role} onValueChange={(v) => setRole(v as any)}><SelectTrigger><SelectValue /></SelectTrigger><SelectContent><SelectItem value="STUDENT">Student</SelectItem><SelectItem value="FACULTY">Faculty</SelectItem><SelectItem value="STAFF">Staff</SelectItem><SelectItem value="ADMIN">Admin</SelectItem></SelectContent></Select>
+                  <Label htmlFor="login-email">Email</Label>
+                  <Input id="login-email" type="email" value={email} onChange={(e) => setEmail(e.target.value)} placeholder="you@campus.edu" disabled={loading} onKeyDown={(e) => e.key === 'Enter' && loginExisting()} />
                 </div>
-                <div className="space-y-1.5"><Label htmlFor="dept">Department (optional)</Label><Input id="dept" value={department} onChange={(e) => setDepartment(e.target.value)} placeholder="Computer Science" /></div>
-                <Button className="w-full" disabled={loading} onClick={loginCustom}>{loading ? <Loader2 className="w-4 h-4 mr-2 animate-spin" /> : null}Sign in</Button>
+                <Button className="w-full bg-emerald-600 hover:bg-emerald-700 text-white" disabled={loading} onClick={loginExisting}>
+                  {loading ? <Loader2 className="w-4 h-4 mr-2 animate-spin" /> : <LogIn className="w-4 h-4 mr-2" />}Login
+                </Button>
+
+                {/* Quick demo logins */}
+                <div className="pt-2 border-t">
+                  <p className="text-xs text-muted-foreground text-center mb-2">Or try a demo account:</p>
+                  <div className="grid grid-cols-2 gap-2">
+                    {demoUsers.map((u) => (
+                      <Button key={u.email} variant="outline" size="sm" disabled={loading} onClick={() => loginDemo(u.email)} className="text-xs h-auto py-2 flex flex-col items-start">
+                        <span className="font-medium">{u.label.split(' · ')[0]}</span>
+                        <span className="text-[10px] text-muted-foreground">{u.label.split(' · ')[1]}</span>
+                      </Button>
+                    ))}
+                  </div>
+                </div>
+              </TabsContent>
+
+              {/* REGISTER TAB — for new users */}
+              <TabsContent value="register" className="space-y-3 pt-4">
+                <div className="space-y-1.5"><Label htmlFor="reg-name">Name</Label><Input id="reg-name" value={name} onChange={(e) => setName(e.target.value)} placeholder="Jane Doe" disabled={loading} /></div>
+                <div className="space-y-1.5"><Label htmlFor="reg-email">Email</Label><Input id="reg-email" type="email" value={email} onChange={(e) => setEmail(e.target.value)} placeholder="jane@campus.edu" disabled={loading} /></div>
+                <div className="space-y-1.5">
+                  <Label htmlFor="reg-role">Role</Label>
+                  <Select value={role} onValueChange={(v) => setRole(v as any)} disabled={loading}><SelectTrigger><SelectValue /></SelectTrigger><SelectContent><SelectItem value="STUDENT">Student</SelectItem><SelectItem value="FACULTY">Faculty</SelectItem><SelectItem value="STAFF">Staff</SelectItem><SelectItem value="ADMIN">Admin</SelectItem></SelectContent></Select>
+                </div>
+                <div className="space-y-1.5"><Label htmlFor="reg-dept">Department (optional)</Label><Input id="reg-dept" value={department} onChange={(e) => setDepartment(e.target.value)} placeholder="Computer Science" disabled={loading} /></div>
+                <Button className="w-full bg-emerald-600 hover:bg-emerald-700 text-white" disabled={loading} onClick={register}>
+                  {loading ? <Loader2 className="w-4 h-4 mr-2 animate-spin" /> : <UserPlus className="w-4 h-4 mr-2" />}Create account
+                </Button>
               </TabsContent>
             </Tabs>
           </CardContent>
