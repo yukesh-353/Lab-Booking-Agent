@@ -742,6 +742,7 @@ function AdminPanel({ user }: { user: User }) {
   const [loading, setLoading] = useState(true)
   const [allBookings, setAllBookings] = useState<Booking[]>([])
   const [allBookingsDate, setAllBookingsDate] = useState(new Date().toLocaleDateString('sv-SE'))
+  const [adminTab, setAdminTab] = useState<'overview' | 'users'>('overview')
   const { toast } = useToast()
 
   const loadStats = useCallback(async () => {
@@ -770,51 +771,203 @@ function AdminPanel({ user }: { user: User }) {
 
   return (
     <div className="space-y-4 p-4 max-w-5xl mx-auto">
-      <div className="grid grid-cols-2 lg:grid-cols-4 gap-3">
-        <StatCard label="Total labs" value={stats?.totals?.labs ?? '—'} icon={<Monitor className="w-4 h-4" />} />
-        <StatCard label="Total users" value={stats?.totals?.users ?? '—'} icon={<Users className="w-4 h-4" />} />
-        <StatCard label="Bookings today" value={stats?.totals?.bookingsToday ?? '—'} icon={<CalendarIcon className="w-4 h-4" />} />
-        <StatCard label="Bookings next 7 days" value={stats?.totals?.bookingsNext7Days ?? '—'} icon={<CalendarDays className="w-4 h-4" />} />
+      {/* Sub-tabs: Overview + Users (admin only) */}
+      <div className="flex gap-2">
+        <Button variant={adminTab === 'overview' ? 'default' : 'outline'} size="sm" onClick={() => setAdminTab('overview')} className={adminTab === 'overview' ? 'bg-emerald-600 hover:bg-emerald-700 text-white' : ''}>Overview</Button>
+        {user.role === 'ADMIN' && <Button variant={adminTab === 'users' ? 'default' : 'outline'} size="sm" onClick={() => setAdminTab('users')} className={adminTab === 'users' ? 'bg-emerald-600 hover:bg-emerald-700 text-white' : ''}><Users className="w-3.5 h-3.5 mr-1" /> User Management</Button>}
       </div>
-      <Card>
-        <CardHeader><CardTitle className="flex items-center gap-2"><History className="w-5 h-5 text-emerald-600" /> Lab usage (next 7 days)</CardTitle><CardDescription>Bookings per lab over the coming week.</CardDescription></CardHeader>
-        <CardContent>
-          {loading ? <div className="flex items-center justify-center py-6"><Loader2 className="w-6 h-6 animate-spin text-muted-foreground" /></div> : (
-            <div className="space-y-2">
-              {stats?.labUsage?.map((lab: any, i: number) => {
-                const max = Math.max(1, ...stats.labUsage.map((l: any) => l.bookingsNext7Days))
-                const pct = (lab.bookingsNext7Days / max) * 100
-                return (<div key={i} className="space-y-1"><div className="flex items-center justify-between text-sm"><span className="truncate">{lab.lab}</span><span className="text-muted-foreground text-xs ml-2">{lab.bookingsNext7Days} bookings · {lab.status.toLowerCase()}</span></div><div className="h-2 rounded-full bg-muted overflow-hidden"><div className="h-full bg-gradient-to-r from-emerald-500 to-teal-600" style={{ width: `${pct}%` }} /></div></div>)
-              })}
-            </div>
+
+      {adminTab === 'users' && user.role === 'ADMIN' ? (
+        <UsersPanel user={user} />
+      ) : (
+        <>
+          <div className="grid grid-cols-2 lg:grid-cols-4 gap-3">
+            <StatCard label="Total labs" value={stats?.totals?.labs ?? '—'} icon={<Monitor className="w-4 h-4" />} />
+            <StatCard label="Total users" value={stats?.totals?.users ?? '—'} icon={<Users className="w-4 h-4" />} />
+            <StatCard label="Bookings today" value={stats?.totals?.bookingsToday ?? '—'} icon={<CalendarIcon className="w-4 h-4" />} />
+            <StatCard label="Bookings next 7 days" value={stats?.totals?.bookingsNext7Days ?? '—'} icon={<CalendarDays className="w-4 h-4" />} />
+          </div>
+          <Card>
+            <CardHeader><CardTitle className="flex items-center gap-2"><History className="w-5 h-5 text-emerald-600" /> Lab usage (next 7 days)</CardTitle><CardDescription>Bookings per lab over the coming week.</CardDescription></CardHeader>
+            <CardContent>
+              {loading ? <div className="flex items-center justify-center py-6"><Loader2 className="w-6 h-6 animate-spin text-muted-foreground" /></div> : (
+                <div className="space-y-2">
+                  {stats?.labUsage?.map((lab: any, i: number) => {
+                    const max = Math.max(1, ...stats.labUsage.map((l: any) => l.bookingsNext7Days))
+                    const pct = (lab.bookingsNext7Days / max) * 100
+                    return (<div key={i} className="space-y-1"><div className="flex items-center justify-between text-sm"><span className="truncate">{lab.lab}</span><span className="text-muted-foreground text-xs ml-2">{lab.bookingsNext7Days} bookings · {lab.status.toLowerCase()}</span></div><div className="h-2 rounded-full bg-muted overflow-hidden"><div className="h-full bg-gradient-to-r from-emerald-500 to-teal-600" style={{ width: `${pct}%` }} /></div></div>)
+                  })}
+                </div>
+              )}
+            </CardContent>
+          </Card>
+          <Card>
+            <CardHeader><CardTitle className="flex items-center gap-2"><CalendarDays className="w-5 h-5 text-emerald-600" /> All bookings on date</CardTitle><CardDescription>Browse every reservation across campus.</CardDescription></CardHeader>
+            <CardContent className="space-y-3">
+              <div className="flex gap-2 items-end"><div className="space-y-1.5"><Label htmlFor="all-date">Date</Label><Input id="all-date" type="date" value={allBookingsDate} onChange={(e) => setAllBookingsDate(e.target.value)} className="w-auto" /></div></div>
+              {allBookings.length === 0 ? <p className="text-sm text-muted-foreground py-6 text-center">No bookings on this date.</p> : (
+                <div className="rounded-md border overflow-hidden">
+                  <div className="grid grid-cols-12 gap-2 bg-muted/50 px-3 py-2 text-xs font-medium text-muted-foreground"><div className="col-span-4">Lab</div><div className="col-span-2">Time</div><div className="col-span-3">Booked by</div><div className="col-span-2">Purpose</div><div className="col-span-1">Status</div></div>
+                  <div className="divide-y max-h-96 overflow-y-auto">
+                    {allBookings.map((b) => (<div key={b.id} className="grid grid-cols-12 gap-2 px-3 py-2 text-xs items-center"><div className="col-span-4 truncate">{b.lab.name}</div><div className="col-span-2 font-mono">{b.startTime}–{b.endTime}</div><div className="col-span-3 truncate">{b.user?.name || '—'} <span className="text-muted-foreground">({(b.user?.role || '').toLowerCase()})</span></div><div className="col-span-2 truncate text-muted-foreground">{b.purpose || '—'}</div><div className="col-span-1">{statusBadge(b.status)}</div></div>))}
+                  </div>
+                </div>
+              )}
+            </CardContent>
+          </Card>
+          {stats?.recentActivity?.length > 0 && (
+            <Card>
+              <CardHeader><CardTitle className="flex items-center gap-2"><History className="w-5 h-5 text-emerald-600" /> Recent activity</CardTitle><CardDescription>Latest 10 booking events.</CardDescription></CardHeader>
+              <CardContent>
+                <div className="space-y-2">
+                  {stats.recentActivity.map((b: Booking) => (<div key={b.id} className="flex items-center justify-between text-xs border-b last:border-0 py-2"><div className="flex items-center gap-2 min-w-0">{statusBadge(b.status)}<span className="truncate">{b.user?.name || 'Unknown'}</span><span className="text-muted-foreground">→</span><span className="truncate">{b.lab.name}</span></div><span className="text-muted-foreground whitespace-nowrap ml-2">{b.date} {b.startTime}–{b.endTime}</span></div>))}
+                </div>
+              </CardContent>
+            </Card>
           )}
-        </CardContent>
-      </Card>
+        </>
+      )}
+    </div>
+  )
+}
+
+// ---------- User Management Panel (admin only) ----------
+function UsersPanel({ user }: { user: User }) {
+  const [users, setUsers] = useState<any[]>([])
+  const [loading, setLoading] = useState(true)
+  const [editing, setEditing] = useState<any | null>(null)
+  const [creating, setCreating] = useState(false)
+  const { toast } = useToast()
+
+  const load = useCallback(async () => {
+    setLoading(true)
+    try {
+      const res = await fetch(`/api/admin/users?userId=${user.id}`)
+      const data = await res.json()
+      if (!res.ok) throw new Error(data.error)
+      setUsers(data.users || [])
+    } catch (e: any) { toast({ title: 'Failed to load users', description: e.message, variant: 'destructive' }) }
+    finally { setLoading(false) }
+  }, [user.id, toast])
+
+  useEffect(() => { load() }, [load])
+
+  const deleteUser = async (u: any) => {
+    if (!confirm(`Delete ${u.name}? This will also delete all their bookings. This cannot be undone.`)) return
+    try {
+      const res = await fetch(`/api/admin/users/${u.id}?userId=${user.id}`, { method: 'DELETE' })
+      const data = await res.json()
+      if (!res.ok) throw new Error(data.error)
+      toast({ title: 'User deleted', description: `${u.name} has been removed.` })
+      load()
+    } catch (e: any) { toast({ title: 'Failed to delete', description: e.message, variant: 'destructive' }) }
+  }
+
+  const roleBadge = (r: string) => {
+    const cls: Record<string, string> = {
+      STUDENT: 'bg-blue-100 text-blue-700 dark:bg-blue-950 dark:text-blue-300',
+      FACULTY: 'bg-purple-100 text-purple-700 dark:bg-purple-950 dark:text-purple-300',
+      STAFF: 'bg-amber-100 text-amber-700 dark:bg-amber-950 dark:text-amber-300',
+      ADMIN: 'bg-emerald-100 text-emerald-700 dark:bg-emerald-950 dark:text-emerald-300',
+    }
+    return <span className={`text-[10px] px-1.5 py-0.5 rounded-full font-medium ${cls[r] || ''}`}>{r.toLowerCase()}</span>
+  }
+
+  return (
+    <div className="space-y-4 p-4 max-w-5xl mx-auto">
       <Card>
-        <CardHeader><CardTitle className="flex items-center gap-2"><CalendarDays className="w-5 h-5 text-emerald-600" /> All bookings on date</CardTitle><CardDescription>Browse every reservation across campus.</CardDescription></CardHeader>
-        <CardContent className="space-y-3">
-          <div className="flex gap-2 items-end"><div className="space-y-1.5"><Label htmlFor="all-date">Date</Label><Input id="all-date" type="date" value={allBookingsDate} onChange={(e) => setAllBookingsDate(e.target.value)} className="w-auto" /></div></div>
-          {allBookings.length === 0 ? <p className="text-sm text-muted-foreground py-6 text-center">No bookings on this date.</p> : (
+        <CardHeader>
+          <div className="flex items-center justify-between">
+            <div>
+              <CardTitle className="flex items-center gap-2"><Users className="w-5 h-5 text-emerald-600" /> Manage users</CardTitle>
+              <CardDescription>Add, edit, or remove users from the system.</CardDescription>
+            </div>
+            <Button onClick={() => setCreating(true)} className="bg-emerald-600 hover:bg-emerald-700 text-white"><Plus className="w-4 h-4 mr-1" /> Add user</Button>
+          </div>
+        </CardHeader>
+        <CardContent>
+          {loading ? <div className="flex items-center justify-center py-8"><Loader2 className="w-6 h-6 animate-spin text-muted-foreground" /></div>
+           : users.length === 0 ? <p className="text-sm text-muted-foreground text-center py-8">No users found.</p>
+           : (
             <div className="rounded-md border overflow-hidden">
-              <div className="grid grid-cols-12 gap-2 bg-muted/50 px-3 py-2 text-xs font-medium text-muted-foreground"><div className="col-span-4">Lab</div><div className="col-span-2">Time</div><div className="col-span-3">Booked by</div><div className="col-span-2">Purpose</div><div className="col-span-1">Status</div></div>
-              <div className="divide-y max-h-96 overflow-y-auto">
-                {allBookings.map((b) => (<div key={b.id} className="grid grid-cols-12 gap-2 px-3 py-2 text-xs items-center"><div className="col-span-4 truncate">{b.lab.name}</div><div className="col-span-2 font-mono">{b.startTime}–{b.endTime}</div><div className="col-span-3 truncate">{b.user?.name || '—'} <span className="text-muted-foreground">({(b.user?.role || '').toLowerCase()})</span></div><div className="col-span-2 truncate text-muted-foreground">{b.purpose || '—'}</div><div className="col-span-1">{statusBadge(b.status)}</div></div>))}
+              <div className="grid grid-cols-12 gap-2 bg-muted/50 px-3 py-2 text-xs font-medium text-muted-foreground">
+                <div className="col-span-3">Name</div>
+                <div className="col-span-4">Email</div>
+                <div className="col-span-2">Role</div>
+                <div className="col-span-2">Department</div>
+                <div className="col-span-1 text-right">Actions</div>
+              </div>
+              <div className="divide-y max-h-[60vh] overflow-y-auto">
+                {users.map((u) => (
+                  <div key={u.id} className="grid grid-cols-12 gap-2 px-3 py-2.5 text-xs items-center">
+                    <div className="col-span-3 font-medium truncate">{u.name}{u.id === user.id && <span className="text-[9px] text-muted-foreground ml-1">(you)</span>}</div>
+                    <div className="col-span-4 truncate text-muted-foreground">{u.email}</div>
+                    <div className="col-span-2">{roleBadge(u.role)}</div>
+                    <div className="col-span-2 truncate text-muted-foreground">{u.department || '—'}</div>
+                    <div className="col-span-1 flex justify-end gap-0.5">
+                      <Button variant="ghost" size="icon" className="h-7 w-7" onClick={() => setEditing(u)} title="Edit"><Pencil className="w-3 h-3" /></Button>
+                      <Button variant="ghost" size="icon" className="h-7 w-7 text-red-600 hover:text-red-700 hover:bg-red-50 dark:hover:bg-red-950/30" onClick={() => deleteUser(u)} title="Delete" disabled={u.id === user.id}><Trash2 className="w-3 h-3" /></Button>
+                    </div>
+                  </div>
+                ))}
               </div>
             </div>
           )}
         </CardContent>
       </Card>
-      {stats?.recentActivity?.length > 0 && (
-        <Card>
-          <CardHeader><CardTitle className="flex items-center gap-2"><History className="w-5 h-5 text-emerald-600" /> Recent activity</CardTitle><CardDescription>Latest 10 booking events.</CardDescription></CardHeader>
-          <CardContent>
-            <div className="space-y-2">
-              {stats.recentActivity.map((b: Booking) => (<div key={b.id} className="flex items-center justify-between text-xs border-b last:border-0 py-2"><div className="flex items-center gap-2 min-w-0">{statusBadge(b.status)}<span className="truncate">{b.user?.name || 'Unknown'}</span><span className="text-muted-foreground">→</span><span className="truncate">{b.lab.name}</span></div><span className="text-muted-foreground whitespace-nowrap ml-2">{b.date} {b.startTime}–{b.endTime}</span></div>))}
-            </div>
-          </CardContent>
-        </Card>
-      )}
+      {(creating || editing) && <UserEditor user={editing} adminId={user.id} onClose={() => { setCreating(false); setEditing(null) }} onSaved={() => { setCreating(false); setEditing(null); load() }} />}
     </div>
+  )
+}
+
+// ---------- User Editor (create/edit dialog) ----------
+function UserEditor({ user, adminId, onClose, onSaved }: { user: any | null; adminId: string; onClose: () => void; onSaved: () => void }) {
+  const isEdit = !!user
+  const [name, setName] = useState(user?.name || '')
+  const [email, setEmail] = useState(user?.email || '')
+  const [role, setRole] = useState<'STUDENT' | 'FACULTY' | 'STAFF' | 'ADMIN'>(user?.role || 'FACULTY')
+  const [department, setDepartment] = useState(user?.department || '')
+  const [saving, setSaving] = useState(false)
+  const { toast } = useToast()
+
+  const save = async () => {
+    if (!name.trim() || !email.trim()) { toast({ title: 'Name and email are required', variant: 'destructive' }); return }
+    setSaving(true)
+    try {
+      const payload: any = { userId: adminId, name: name.trim(), role, department: department.trim() || null }
+      if (!isEdit) payload.email = email.trim().toLowerCase()
+      const url = isEdit ? `/api/admin/users/${user.id}` : '/api/admin/users'
+      const method = isEdit ? 'PATCH' : 'POST'
+      const res = await fetch(url, { method, headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(payload) })
+      const data = await res.json()
+      if (!res.ok) throw new Error(data.error || 'Save failed')
+      toast({ title: isEdit ? 'User updated' : 'User created', description: `${name} has been ${isEdit ? 'updated' : 'added'}.` })
+      onSaved()
+    } catch (e: any) { toast({ title: 'Save failed', description: e.message, variant: 'destructive' }) }
+    finally { setSaving(false) }
+  }
+
+  return (
+    <Dialog open onOpenChange={(o) => { if (!o) onClose() }}>
+      <DialogContent className="max-w-md">
+        <DialogHeader>
+          <DialogTitle>{isEdit ? 'Edit user' : 'Add new user'}</DialogTitle>
+          <DialogDescription>{isEdit ? `Update details for ${user.name}.` : 'Create a new user account.'}</DialogDescription>
+        </DialogHeader>
+        <div className="space-y-3 py-2">
+          <div className="space-y-1.5"><Label htmlFor="user-name">Name *</Label><Input id="user-name" value={name} onChange={(e) => setName(e.target.value)} maxLength={100} placeholder="Jane Doe" /></div>
+          <div className="space-y-1.5"><Label htmlFor="user-email">Email *</Label><Input id="user-email" type="email" value={email} onChange={(e) => setEmail(e.target.value)} placeholder="jane@campus.edu" disabled={isEdit} />{isEdit && <p className="text-[10px] text-muted-foreground">Email cannot be changed.</p>}</div>
+          <div className="grid grid-cols-2 gap-3">
+            <div className="space-y-1.5"><Label htmlFor="user-role">Role</Label><Select value={role} onValueChange={(v) => setRole(v as any)}><SelectTrigger><SelectValue /></SelectTrigger><SelectContent><SelectItem value="STUDENT">Student</SelectItem><SelectItem value="FACULTY">Faculty</SelectItem><SelectItem value="STAFF">Staff</SelectItem><SelectItem value="ADMIN">Admin</SelectItem></SelectContent></Select></div>
+            <div className="space-y-1.5"><Label htmlFor="user-dept">Department</Label><Input id="user-dept" value={department} onChange={(e) => setDepartment(e.target.value)} placeholder="Computer Science" /></div>
+          </div>
+        </div>
+        <DialogFooter>
+          <Button variant="outline" onClick={onClose} disabled={saving}>Cancel</Button>
+          <Button onClick={save} disabled={saving} className="bg-emerald-600 hover:bg-emerald-700 text-white">{saving ? <Loader2 className="w-4 h-4 mr-2 animate-spin" /> : null}{isEdit ? 'Save changes' : 'Create user'}</Button>
+        </DialogFooter>
+      </DialogContent>
+    </Dialog>
   )
 }
 
