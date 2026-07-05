@@ -148,7 +148,7 @@ function LoginScreen({ onLogin }: { onLogin: (u: User) => void }) {
   return (
     <div className="relative min-h-screen flex flex-col items-center justify-center bg-gradient-to-br from-emerald-50 via-white to-teal-50 dark:from-slate-950 dark:via-slate-900 dark:to-emerald-950 p-4">
       <div className="absolute top-4 right-4"><ThemeToggle /></div>
-      <div className="w-full max-w-md space-y-6">
+      <div className="w-full max-w-md space-y-6 animate-fade-in-up">
         <div className="text-center space-y-2">
           <div className="inline-flex items-center justify-center w-16 h-16 rounded-2xl bg-gradient-to-br from-emerald-500 to-teal-600 text-white shadow-lg"><Bot className="w-8 h-8" /></div>
           <h1 className="text-3xl font-bold tracking-tight">Labby</h1>
@@ -176,7 +176,7 @@ function LoginScreen({ onLogin }: { onLogin: (u: User) => void }) {
                 {/* Quick demo logins */}
                 <div className="pt-2 border-t">
                   <p className="text-xs text-muted-foreground text-center mb-2">Or try a demo account:</p>
-                  <div className="grid grid-cols-2 gap-2">
+                  <div className="grid grid-cols-2 gap-2 stagger">
                     {demoUsers.map((u) => (
                       <Button key={u.email} variant="outline" size="sm" disabled={loading} onClick={() => loginDemo(u.email)} className="text-xs h-auto py-2 flex flex-col items-start">
                         <span className="font-medium">{u.label.split(' · ')[0]}</span>
@@ -269,7 +269,7 @@ function MessageBubble({ message, userName }: { message: ChatMessage; userName: 
   const isUser = message.role === 'user'
   const initials = isUser ? userName.split(' ').map((s) => s[0]).slice(0, 2).join('') : 'L'
   return (
-    <div className={`flex gap-3 items-start ${isUser ? 'flex-row-reverse' : ''}`}>
+    <div className={`flex gap-3 items-start ${isUser ? 'flex-row-reverse' : ''} ${isUser ? 'animate-slide-in-right' : 'animate-slide-in-left'}`}>
       <div className={`w-8 h-8 rounded-full flex items-center justify-center shrink-0 text-white text-xs font-semibold ${isUser ? 'bg-slate-700' : 'bg-gradient-to-br from-emerald-500 to-teal-600'}`}>{isUser ? initials : <Bot className="w-4 h-4" />}</div>
       <div className={`max-w-[80%] px-4 py-3 rounded-2xl text-sm whitespace-pre-wrap ${isUser ? 'bg-slate-700 text-white rounded-tr-sm' : 'bg-muted rounded-tl-sm'}`}><MarkdownLite content={message.content} /></div>
     </div>
@@ -600,7 +600,7 @@ function LabsPanel({ user }: { user: User }) {
            : (
             <div className="space-y-2">
               {labs.map((lab) => (
-                <div key={lab.id} className="flex items-center justify-between rounded-lg border p-3 gap-3">
+                <div key={lab.id} className="flex items-center justify-between rounded-lg border p-3 gap-3 hover-lift">
                   <div className="flex-1 min-w-0">
                     <div className="flex items-center gap-2 flex-wrap">
                       <span className="font-medium text-sm truncate">{lab.name}</span>
@@ -755,7 +755,7 @@ function MyBookingsPanel({ user }: { user: User }) {
 function BookingCard({ booking, onCancel }: { booking: Booking; onCancel: () => void }) {
   const cancelled = booking.status === 'CANCELLED' || booking.status === 'REJECTED'
   return (
-    <div className={`flex items-center justify-between rounded-lg border p-3 ${cancelled ? 'opacity-60' : ''}`}>
+    <div className={`flex items-center justify-between rounded-lg border p-3 ${cancelled ? 'opacity-60' : 'hover-lift'}`}>
       <div className="flex-1 min-w-0">
         <div className="flex items-center gap-2 flex-wrap">
           <span className="font-medium text-sm truncate">{booking.lab.name}</span>
@@ -818,7 +818,7 @@ function AdminPanel({ user }: { user: User }) {
         <UsersPanel user={user} />
       ) : (
         <>
-          <div className="grid grid-cols-2 lg:grid-cols-4 gap-3">
+          <div className="grid grid-cols-2 lg:grid-cols-4 gap-3 stagger">
             <StatCard label="Total labs" value={stats?.totals?.labs ?? '—'} icon={<Monitor className="w-4 h-4" />} />
             <StatCard label="Total users" value={stats?.totals?.users ?? '—'} icon={<Users className="w-4 h-4" />} />
             <StatCard label="Bookings today" value={stats?.totals?.bookingsToday ?? '—'} icon={<CalendarIcon className="w-4 h-4" />} />
@@ -1042,7 +1042,7 @@ export default function Home() {
   }, [])
 
   if (loading) {
-    return (<div className="min-h-screen flex flex-col items-center justify-center gap-3 bg-background"><div className="w-12 h-12 rounded-xl bg-gradient-to-br from-emerald-500 to-teal-600 text-white flex items-center justify-center"><Bot className="w-6 h-6" /></div><div className="flex items-center gap-2 text-sm text-muted-foreground"><Loader2 className="w-4 h-4 animate-spin" /> Loading Labby…</div></div>)
+    return (<div className="min-h-screen flex flex-col items-center justify-center gap-3 bg-background"><div className="w-12 h-12 rounded-xl bg-gradient-to-br from-emerald-500 to-teal-600 text-white flex items-center justify-center animate-scale-in"><Bot className="w-6 h-6" /></div><div className="flex items-center gap-2 text-sm text-muted-foreground animate-fade-in-down"><Loader2 className="w-4 h-4 animate-spin" /> Loading Labby…</div></div>)
   }
 
   if (!user) return <LoginScreen onLogin={setUser} />
@@ -1090,11 +1090,11 @@ export default function Home() {
               {canSeeAdmin && <TabsTrigger value="admin" className="bg-transparent shadow-none data-[state=active]:bg-transparent data-[state=active]:shadow-none rounded-none border-b-2 border-transparent data-[state=active]:border-emerald-600 data-[state=active]:text-emerald-700 dark:data-[state=active]:text-emerald-400 flex items-center gap-1.5"><Shield className="w-4 h-4" /> Admin</TabsTrigger>}
             </TabsList>
             <TabsContent value="chat" className="mt-0 h-[calc(100vh-3.5rem-3rem)]"><ChatPanel user={user} /></TabsContent>
-            <TabsContent value="book" className="mt-0"><BookPanel user={user} /></TabsContent>
-            <TabsContent value="calendar" className="mt-0"><CalendarPanel user={user} /></TabsContent>
-            <TabsContent value="bookings" className="mt-0"><MyBookingsPanel user={user} /></TabsContent>
-            {canManageLabs && <TabsContent value="labs" className="mt-0"><LabsPanel user={user} /></TabsContent>}
-            {canSeeAdmin && <TabsContent value="admin" className="mt-0"><AdminPanel user={user} /></TabsContent>}
+            <TabsContent value="book" className="mt-0 tab-content-enter"><BookPanel user={user} /></TabsContent>
+            <TabsContent value="calendar" className="mt-0 tab-content-enter"><CalendarPanel user={user} /></TabsContent>
+            <TabsContent value="bookings" className="mt-0 tab-content-enter"><MyBookingsPanel user={user} /></TabsContent>
+            {canManageLabs && <TabsContent value="labs" className="mt-0 tab-content-enter"><LabsPanel user={user} /></TabsContent>}
+            {canSeeAdmin && <TabsContent value="admin" className="mt-0 tab-content-enter"><AdminPanel user={user} /></TabsContent>}
           </Tabs>
         </div>
       </div>
