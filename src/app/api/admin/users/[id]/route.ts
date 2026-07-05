@@ -1,14 +1,14 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { db } from '@/lib/db'
-import { getUserFromRequest } from '@/lib/auth'
 
 export async function PATCH(req: NextRequest, { params }: { params: Promise<{ id: string }> }) {
   const { id } = await params
-  const admin = await getUserFromRequest(req)
-  if (!admin || admin.role !== 'ADMIN') return NextResponse.json({ error: 'Admin access required' }, { status: 403 })
   let body: any
   try { body = await req.json() } catch { return NextResponse.json({ error: 'Invalid JSON body' }, { status: 400 }) }
-  const { userId: _drop, ...updates } = body
+  const { userId, ...updates } = body
+  if (!userId) return NextResponse.json({ error: 'userId is required' }, { status: 400 })
+  const admin = await db.user.findUnique({ where: { id: userId } })
+  if (!admin || admin.role !== 'ADMIN') return NextResponse.json({ error: 'Admin access required' }, { status: 403 })
   const target = await db.user.findUnique({ where: { id } })
   if (!target) return NextResponse.json({ error: 'User not found' }, { status: 404 })
   if (target.id === admin.id && updates.role && updates.role !== 'ADMIN') return NextResponse.json({ error: 'You cannot demote yourself.' }, { status: 400 })
@@ -22,9 +22,12 @@ export async function PATCH(req: NextRequest, { params }: { params: Promise<{ id
 
 export async function DELETE(req: NextRequest, { params }: { params: Promise<{ id: string }> }) {
   const { id } = await params
-  const admin = await getUserFromRequest(req)
+  const url = new URL(req.url)
+  const userId = url.searchParams.get('userId')
+  if (!userId) return NextResponse.json({ error: 'userId is required' }, { status: 400 })
+  const admin = await db.user.findUnique({ where: { id: userId } })
   if (!admin || admin.role !== 'ADMIN') return NextResponse.json({ error: 'Admin access required' }, { status: 403 })
-  if (id === admin.id) return NextResponse.json({ error: 'You cannot delete your own account.' }, { status: 400 })
+  if (id === userId) return NextResponse.json({ error: 'You cannot delete your own account.' }, { status: 400 })
   const target = await db.user.findUnique({ where: { id } })
   if (!target) return NextResponse.json({ error: 'User not found' }, { status: 404 })
   await db.user.delete({ where: { id } })

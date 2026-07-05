@@ -1,16 +1,16 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { db } from '@/lib/db'
 import { canManageLabs, validateLab } from '@/lib/booking'
-import { getUserFromRequest } from '@/lib/auth'
 
 export async function PATCH(req: NextRequest, { params }: { params: Promise<{ id: string }> }) {
   const { id } = await params
-  const user = await getUserFromRequest(req)
-  if (!user) return NextResponse.json({ error: 'Not authenticated' }, { status: 401 })
-  if (!canManageLabs(user.role)) return NextResponse.json({ error: 'Only faculty, staff, and admins can update labs' }, { status: 403 })
   let body: any
   try { body = await req.json() } catch { return NextResponse.json({ error: 'Invalid JSON body' }, { status: 400 }) }
-  const { userId: _drop, ...updates } = body
+  const { userId, ...updates } = body
+  if (!userId) return NextResponse.json({ error: 'userId is required' }, { status: 400 })
+  const user = await db.user.findUnique({ where: { id: userId } })
+  if (!user) return NextResponse.json({ error: 'User not found' }, { status: 404 })
+  if (!canManageLabs(user.role)) return NextResponse.json({ error: 'Only faculty, staff, and admins can update labs' }, { status: 403 })
   const lab = await db.lab.findUnique({ where: { id } })
   if (!lab) return NextResponse.json({ error: 'Lab not found' }, { status: 404 })
   const v = validateLab(updates)
@@ -34,8 +34,11 @@ export async function PATCH(req: NextRequest, { params }: { params: Promise<{ id
 
 export async function DELETE(req: NextRequest, { params }: { params: Promise<{ id: string }> }) {
   const { id } = await params
-  const user = await getUserFromRequest(req)
-  if (!user) return NextResponse.json({ error: 'Not authenticated' }, { status: 401 })
+  const url = new URL(req.url)
+  const userId = url.searchParams.get('userId')
+  if (!userId) return NextResponse.json({ error: 'userId is required' }, { status: 400 })
+  const user = await db.user.findUnique({ where: { id: userId } })
+  if (!user) return NextResponse.json({ error: 'User not found' }, { status: 404 })
   if (!canManageLabs(user.role)) return NextResponse.json({ error: 'Only faculty, staff, and admins can delete labs' }, { status: 403 })
   const lab = await db.lab.findUnique({ where: { id } })
   if (!lab) return NextResponse.json({ error: 'Lab not found' }, { status: 404 })

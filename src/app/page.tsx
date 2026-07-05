@@ -87,24 +87,47 @@ const QUICK_PROMPTS = [
   'Show my bookings',
 ]
 
-// ---------- Auth helpers (session cookie + Bearer header fallback) ----------
-function getSessionToken(): string | null {
-  if (typeof document === 'undefined') return null
-  const match = document.cookie.match(/labby_session=([^;]+)/)
-  return match?.[1] || null
-}
-
-async function authFetch(url: string, options?: RequestInit): Promise<Response> {
-  const token = getSessionToken()
-  const headers = new Headers(options?.headers)
-  if (token) headers.set('Authorization', `Bearer ${token}`)
-  return fetch(url, { ...options, headers })
-}
-
-// ---------- Login / Register screen with sliding toggle ----------
+// ---------- Login screen ----------
 function LoginScreen({ onLogin }: { onLogin: (u: User) => void }) {
-  const [mode, setMode] = useState<'login' | 'register'>('login')
+  const [mode, setMode] = useState<'demo' | 'custom'>('demo')
+  const [name, setName] = useState('')
+  const [email, setEmail] = useState('')
+  const [role, setRole] = useState<'STUDENT' | 'FACULTY' | 'STAFF' | 'ADMIN'>('STUDENT')
+  const [department, setDepartment] = useState('')
+  const [loading, setLoading] = useState(false)
   const { toast } = useToast()
+
+  const demoUsers = [
+    { email: 'alice@campus.edu', label: 'Alice Chen · Student · Computer Science' },
+    { email: 'bob@campus.edu', label: 'Bob Patel · Faculty · Computer Science' },
+    { email: 'carol@campus.edu', label: 'Carol Reyes · Staff · IT Services' },
+    { email: 'admin@campus.edu', label: 'Admin Wang · Admin · IT Services' },
+  ]
+
+  const loginDemo = async (email: string) => {
+    setLoading(true)
+    try {
+      const res = await fetch(`/api/session?email=${encodeURIComponent(email)}`)
+      const data = await res.json()
+      if (!res.ok) throw new Error(data.error || 'Login failed')
+      saveUser(data.user)
+      onLogin(data.user)
+    } catch (e: any) { toast({ title: 'Login failed', description: e.message, variant: 'destructive' }) }
+    finally { setLoading(false) }
+  }
+
+  const loginCustom = async () => {
+    if (!name.trim() || !email.trim()) { toast({ title: 'Name and email are required', variant: 'destructive' }); return }
+    setLoading(true)
+    try {
+      const res = await fetch('/api/session', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ email: email.trim(), name: name.trim(), role, department: department.trim() || undefined }) })
+      const data = await res.json()
+      if (!res.ok) throw new Error(data.error || 'Login failed')
+      saveUser(data.user)
+      onLogin(data.user)
+    } catch (e: any) { toast({ title: 'Login failed', description: e.message, variant: 'destructive' }) }
+    finally { setLoading(false) }
+  }
 
   return (
     <div className="relative min-h-screen flex flex-col items-center justify-center bg-gradient-to-br from-emerald-50 via-white to-teal-50 dark:from-slate-950 dark:via-slate-900 dark:to-emerald-950 p-4">
@@ -115,126 +138,36 @@ function LoginScreen({ onLogin }: { onLogin: (u: User) => void }) {
           <h1 className="text-3xl font-bold tracking-tight">Labby</h1>
           <p className="text-muted-foreground text-sm">Your AI agent for campus computer lab bookings</p>
         </div>
-
-        <div className="rounded-2xl border bg-card shadow-sm overflow-hidden">
-          {/* Sliding toggle */}
-          <div className="relative grid grid-cols-2 bg-muted/50 p-1">
-            <div
-              className={`absolute top-1 bottom-1 left-1 w-[calc(50%-4px)] rounded-xl bg-white dark:bg-slate-800 shadow-sm transition-transform duration-300 ease-out ${mode === 'register' ? 'translate-x-full' : ''}`}
-            />
-            <button
-              type="button"
-              onClick={() => setMode('login')}
-              className={`relative z-10 py-2.5 text-sm font-medium transition-colors ${mode === 'login' ? 'text-emerald-600 dark:text-emerald-400' : 'text-muted-foreground'}`}
-            >
-              Sign in
-            </button>
-            <button
-              type="button"
-              onClick={() => setMode('register')}
-              className={`relative z-10 py-2.5 text-sm font-medium transition-colors ${mode === 'register' ? 'text-emerald-600 dark:text-emerald-400' : 'text-muted-foreground'}`}
-            >
-              Sign up
-            </button>
-          </div>
-
-          <div className="p-6">
-            {mode === 'login' ? <LoginForm onLogin={onLogin} toast={toast} /> : <RegisterForm onLogin={onLogin} toast={toast} />}
-          </div>
-        </div>
-
-        <p className="text-xs text-center text-muted-foreground">
-          Demo: alice/bob/carol/admin @campus.edu · password: <code className="font-mono">demo1234</code>
-        </p>
+        <Card>
+          <CardHeader>
+            <CardTitle className="text-lg">Sign in to continue</CardTitle>
+            <CardDescription>Pick a demo account or create your own</CardDescription>
+          </CardHeader>
+          <CardContent className="space-y-4">
+            <Tabs value={mode} onValueChange={(v) => setMode(v as 'demo' | 'custom')}>
+              <TabsList className="grid w-full grid-cols-2"><TabsTrigger value="demo">Demo accounts</TabsTrigger><TabsTrigger value="custom">Custom</TabsTrigger></TabsList>
+              <TabsContent value="demo" className="space-y-2 pt-4">
+                {demoUsers.map((u) => (
+                  <Button key={u.email} variant="outline" className="w-full justify-start text-left h-auto py-3" disabled={loading} onClick={() => loginDemo(u.email)}>
+                    <User className="w-4 h-4 mr-3 shrink-0" /><span className="text-sm">{u.label}</span>
+                  </Button>
+                ))}
+              </TabsContent>
+              <TabsContent value="custom" className="space-y-3 pt-4">
+                <div className="space-y-1.5"><Label htmlFor="name">Name</Label><Input id="name" value={name} onChange={(e) => setName(e.target.value)} placeholder="Jane Doe" /></div>
+                <div className="space-y-1.5"><Label htmlFor="email">Email</Label><Input id="email" type="email" value={email} onChange={(e) => setEmail(e.target.value)} placeholder="jane@campus.edu" /></div>
+                <div className="space-y-1.5">
+                  <Label htmlFor="role">Role</Label>
+                  <Select value={role} onValueChange={(v) => setRole(v as any)}><SelectTrigger><SelectValue /></SelectTrigger><SelectContent><SelectItem value="STUDENT">Student</SelectItem><SelectItem value="FACULTY">Faculty</SelectItem><SelectItem value="STAFF">Staff</SelectItem><SelectItem value="ADMIN">Admin</SelectItem></SelectContent></Select>
+                </div>
+                <div className="space-y-1.5"><Label htmlFor="dept">Department (optional)</Label><Input id="dept" value={department} onChange={(e) => setDepartment(e.target.value)} placeholder="Computer Science" /></div>
+                <Button className="w-full" disabled={loading} onClick={loginCustom}>{loading ? <Loader2 className="w-4 h-4 mr-2 animate-spin" /> : null}Sign in</Button>
+              </TabsContent>
+            </Tabs>
+          </CardContent>
+        </Card>
       </div>
     </div>
-  )
-}
-
-// ---------- Login form ----------
-function LoginForm({ onLogin, toast }: { onLogin: (u: User) => void; toast: any }) {
-  const [email, setEmail] = useState('')
-  const [password, setPassword] = useState('')
-  const [showPw, setShowPw] = useState(false)
-  const [loading, setLoading] = useState(false)
-
-  const submit = async (e: React.FormEvent) => {
-    e.preventDefault()
-    if (!email.trim() || !password) { toast({ title: 'Email and password are required', variant: 'destructive' }); return }
-    setLoading(true)
-    try {
-      const res = await authFetch('/api/auth/login', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ email: email.trim(), password }) })
-      const data = await res.json()
-      if (!res.ok) throw new Error(data.error || 'Login failed')
-      saveUser(data.user)
-      onLogin(data.user)
-    } catch (e: any) { toast({ title: 'Login failed', description: e.message, variant: 'destructive' }) }
-    finally { setLoading(false) }
-  }
-
-  return (
-    <form onSubmit={submit} className="space-y-3">
-      <div className="space-y-1.5">
-        <Label htmlFor="login-email">Email</Label>
-        <Input id="login-email" type="email" value={email} onChange={(e) => setEmail(e.target.value)} placeholder="you@campus.edu" autoComplete="email" disabled={loading} />
-      </div>
-      <div className="space-y-1.5">
-        <Label htmlFor="login-pw">Password</Label>
-        <div className="relative">
-          <Input id="login-pw" type={showPw ? 'text' : 'password'} value={password} onChange={(e) => setPassword(e.target.value)} placeholder="••••••••" autoComplete="current-password" disabled={loading} className="pr-12" />
-          <button type="button" onClick={() => setShowPw(!showPw)} className="absolute right-3 top-1/2 -translate-y-1/2 text-xs text-muted-foreground hover:text-foreground">{showPw ? 'Hide' : 'Show'}</button>
-        </div>
-      </div>
-      <Button type="submit" className="w-full bg-emerald-600 hover:bg-emerald-700 text-white" disabled={loading}>
-        {loading ? <Loader2 className="w-4 h-4 mr-2 animate-spin" /> : null}Sign in
-      </Button>
-    </form>
-  )
-}
-
-// ---------- Register form ----------
-function RegisterForm({ onLogin, toast }: { onLogin: (u: User) => void; toast: any }) {
-  const [name, setName] = useState('')
-  const [email, setEmail] = useState('')
-  const [password, setPassword] = useState('')
-  const [confirmPw, setConfirmPw] = useState('')
-  const [role, setRole] = useState<'STUDENT' | 'FACULTY' | 'STAFF'>('STUDENT')
-  const [department, setDepartment] = useState('')
-  const [showPw, setShowPw] = useState(false)
-  const [loading, setLoading] = useState(false)
-
-  const submit = async (e: React.FormEvent) => {
-    e.preventDefault()
-    if (!name.trim() || !email.trim() || !password) { toast({ title: 'All fields are required', variant: 'destructive' }); return }
-    if (password !== confirmPw) { toast({ title: 'Passwords do not match', variant: 'destructive' }); return }
-    if (password.length < 6) { toast({ title: 'Password must be at least 6 characters', variant: 'destructive' }); return }
-    setLoading(true)
-    try {
-      const res = await authFetch('/api/auth/register', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ name: name.trim(), email: email.trim(), password, role, department: department.trim() || undefined }) })
-      const data = await res.json()
-      if (!res.ok) throw new Error(data.error || 'Registration failed')
-      saveUser(data.user)
-      onLogin(data.user)
-    } catch (e: any) { toast({ title: 'Registration failed', description: e.message, variant: 'destructive' }) }
-    finally { setLoading(false) }
-  }
-
-  return (
-    <form onSubmit={submit} className="space-y-3">
-      <div className="space-y-1.5"><Label htmlFor="reg-name">Full name</Label><Input id="reg-name" value={name} onChange={(e) => setName(e.target.value)} placeholder="Jane Doe" disabled={loading} maxLength={100} /></div>
-      <div className="space-y-1.5"><Label htmlFor="reg-email">Email</Label><Input id="reg-email" type="email" value={email} onChange={(e) => setEmail(e.target.value)} placeholder="jane@campus.edu" autoComplete="email" disabled={loading} /></div>
-      <div className="grid grid-cols-2 gap-3">
-        <div className="space-y-1.5"><Label htmlFor="reg-pw">Password</Label><div className="relative"><Input id="reg-pw" type={showPw ? 'text' : 'password'} value={password} onChange={(e) => setPassword(e.target.value)} placeholder="min 6 chars" autoComplete="new-password" disabled={loading} className="pr-12" /><button type="button" onClick={() => setShowPw(!showPw)} className="absolute right-3 top-1/2 -translate-y-1/2 text-xs text-muted-foreground hover:text-foreground">{showPw ? 'Hide' : 'Show'}</button></div></div>
-        <div className="space-y-1.5"><Label htmlFor="reg-confirm">Confirm</Label><Input id="reg-confirm" type={showPw ? 'text' : 'password'} value={confirmPw} onChange={(e) => setConfirmPw(e.target.value)} placeholder="re-enter" autoComplete="new-password" disabled={loading} /></div>
-      </div>
-      <div className="grid grid-cols-2 gap-3">
-        <div className="space-y-1.5"><Label htmlFor="reg-role">Role</Label><Select value={role} onValueChange={(v) => setRole(v as any)} disabled={loading}><SelectTrigger><SelectValue /></SelectTrigger><SelectContent><SelectItem value="STUDENT">Student</SelectItem><SelectItem value="FACULTY">Faculty</SelectItem><SelectItem value="STAFF">Staff</SelectItem></SelectContent></Select></div>
-        <div className="space-y-1.5"><Label htmlFor="reg-dept">Department</Label><Input id="reg-dept" value={department} onChange={(e) => setDepartment(e.target.value)} placeholder="Computer Science" disabled={loading} /></div>
-      </div>
-      <Button type="submit" className="w-full bg-emerald-600 hover:bg-emerald-700 text-white" disabled={loading}>
-        {loading ? <Loader2 className="w-4 h-4 mr-2 animate-spin" /> : null}Create account
-      </Button>
-    </form>
   )
 }
 
@@ -257,7 +190,7 @@ function ChatPanel({ user }: { user: User }) {
     setInput('')
     setLoading(true)
     try {
-      const res = await fetch('/api/chat', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ message: trimmed, history }) })
+      const res = await fetch('/api/chat', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ userId: user.id, message: trimmed, history }) })
       const data = await res.json()
       if (!res.ok) throw new Error(data.error || 'Chat failed')
       setMessages((prev) => [...prev, { role: 'assistant', content: data.reply, ts: Date.now() }])
@@ -465,7 +398,7 @@ function BookPanel({ user }: { user: User }) {
       const res = await fetch('/api/bookings', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ labId: selectedLabId, date: selectedDate, startTime, endTime, purpose: purpose.trim() || undefined }),
+        body: JSON.stringify({ userId: user.id, labId: selectedLabId, date: selectedDate, startTime, endTime, purpose: purpose.trim() || undefined }),
       })
       const data = await res.json()
       if (!res.ok) throw new Error(data.error || 'Booking failed')
@@ -584,7 +517,7 @@ function LabsPanel({ user }: { user: User }) {
 
   const setLabStatus = async (lab: Lab, status: 'OPEN' | 'CLOSED' | 'MAINTENANCE') => {
     try {
-      const res = await fetch(`/api/labs/${lab.id}`, { method: 'PATCH', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ status }) })
+      const res = await fetch(`/api/labs/${lab.id}`, { method: 'PATCH', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ userId: user.id, status }) })
       const data = await res.json()
       if (!res.ok) throw new Error(data.error)
       toast({ title: 'Status updated', description: `${lab.name} is now ${status.toLowerCase()}.` })
@@ -733,7 +666,7 @@ function MyBookingsPanel({ user }: { user: User }) {
   const load = useCallback(async () => {
     setLoading(true)
     try {
-      const res = await fetch(`/api/bookings?scope=mine`)
+      const res = await fetch(`/api/bookings?userId=${user.id}/api/bookings?scope=minescope=mine`)
       const data = await res.json()
       if (!res.ok) throw new Error(data.error)
       setBookings(data.bookings || [])
@@ -820,7 +753,7 @@ function AdminPanel({ user }: { user: User }) {
   }, [user.id, toast])
 
   const loadAllBookings = useCallback(async () => {
-    try { const res = await fetch(`/api/bookings?scope=all&date=${allBookingsDate}`); const data = await res.json(); if (!res.ok) throw new Error(data.error); setAllBookings(data.bookings || []) }
+    try { const res = await fetch(`/api/bookings?userId=${user.id}/api/bookings?scope=allscope=all&date=${allBookingsDate}`); const data = await res.json(); if (!res.ok) throw new Error(data.error); setAllBookings(data.bookings || []) }
     catch (e: any) { toast({ title: 'Failed to load bookings', description: e.message, variant: 'destructive' }) }
   }, [user.id, allBookingsDate, toast])
 
@@ -982,13 +915,13 @@ function UsersPanel({ user }: { user: User }) {
           )}
         </CardContent>
       </Card>
-      {(creating || editing) && <UserEditor user={editing} onClose={() => { setCreating(false); setEditing(null) }} onSaved={() => { setCreating(false); setEditing(null); load() }} />}
+      {(creating || editing) && <UserEditor user={editing} adminId={user.id} onClose={() => { setCreating(false); setEditing(null) }} onSaved={() => { setCreating(false); setEditing(null); load() }} />}
     </div>
   )
 }
 
 // ---------- User Editor (create/edit dialog) ----------
-function UserEditor({ user, onClose, onSaved }: { user: any | null; onClose: () => void; onSaved: () => void }) {
+function UserEditor({ user, adminId, onClose, onSaved }: { user: any | null; adminId: string; onClose: () => void; onSaved: () => void }) {
   const isEdit = !!user
   const [name, setName] = useState(user?.name || '')
   const [email, setEmail] = useState(user?.email || '')
@@ -1001,9 +934,9 @@ function UserEditor({ user, onClose, onSaved }: { user: any | null; onClose: () 
     if (!name.trim() || !email.trim()) { toast({ title: 'Name and email are required', variant: 'destructive' }); return }
     setSaving(true)
     try {
-      const payload: any = { name: name.trim(), role, department: department.trim() || null }
+      const payload: any = { userId: adminId, name: name.trim(), role, department: department.trim() || null }
       if (!isEdit) payload.email = email.trim().toLowerCase()
-      const url = isEdit ? `/api/admin/users/${user.id}` : '/api/admin/users'
+      const url = isEdit ? `/api/admin/users/${user.id}?userId=${adminId}` : '/api/admin/users'
       const method = isEdit ? 'PATCH' : 'POST'
       const res = await fetch(url, { method, headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(payload) })
       const data = await res.json()
@@ -1049,22 +982,22 @@ export default function Home() {
   const [tab, setTab] = useState('chat')
 
   useEffect(() => {
-    // Verify the session cookie via /api/auth/me on page load.
+    // Load cached user, then refresh from server using email (stable across DB re-seeds).
+    const cached = loadUser()
     let cancelled = false
     const id = setTimeout(async () => {
+      if (!cached) { if (!cancelled) setLoading(false); return }
       try {
-        const res = await authFetch('/api/auth/me')
+        const res = await fetch(`/api/session?email=${encodeURIComponent(cached.email)}`)
         if (cancelled) return
         if (res.ok) {
           const data = await res.json()
           if (data.user) { saveUser(data.user); setUser(data.user) }
-        } else {
-          saveUser(null)
-        }
+          else { saveUser(null); setUser(null) }
+        } else { saveUser(null); setUser(null) }
       } catch {
-        // Network error — try cached user as offline fallback
-        const cached = loadUser()
-        if (cached) setUser(cached)
+        if (cancelled) return
+        setUser(cached)
       }
       if (!cancelled) setLoading(false)
     }, 0)
@@ -1077,11 +1010,7 @@ export default function Home() {
 
   if (!user) return <LoginScreen onLogin={setUser} />
 
-  const logout = async () => {
-    try { await authFetch('/api/auth/logout', { method: 'POST' }) } catch {}
-    saveUser(null)
-    setUser(null)
-  }
+  const logout = () => { saveUser(null); setUser(null) }
 
   const roleBadge = {
     STUDENT: 'bg-blue-100 text-blue-700 dark:bg-blue-950 dark:text-blue-300',

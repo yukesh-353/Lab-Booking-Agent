@@ -1,11 +1,13 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { db } from '@/lib/db'
 import { todayISO, addDays } from '@/lib/booking'
-import { getUserFromRequest } from '@/lib/auth'
 
 export async function GET(req: NextRequest) {
-  const user = await getUserFromRequest(req)
-  if (!user) return NextResponse.json({ error: 'Not authenticated' }, { status: 401 })
+  const url = new URL(req.url)
+  const userId = url.searchParams.get('userId')
+  if (!userId) return NextResponse.json({ error: 'userId is required' }, { status: 400 })
+  const user = await db.user.findUnique({ where: { id: userId } })
+  if (!user) return NextResponse.json({ error: 'User not found' }, { status: 404 })
   if (user.role !== 'ADMIN' && user.role !== 'STAFF') return NextResponse.json({ error: 'Admin access required' }, { status: 403 })
   const today = todayISO()
   const weekEnd = addDays(today, 7)
