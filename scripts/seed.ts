@@ -15,7 +15,7 @@ async function main() {
   await db.user.deleteMany({})
   await db.lab.deleteMany({})
 
-  // No students — the software is for faculty, staff, and admins only.
+  const alice = await db.user.create({ data: { name: 'Alice Chen', email: 'alice@campus.edu', role: 'STUDENT', department: 'Computer Science' } })
   const bob = await db.user.create({ data: { name: 'Bob Patel', email: 'bob@campus.edu', role: 'FACULTY', department: 'Computer Science' } })
   const carol = await db.user.create({ data: { name: 'Carol Reyes', email: 'carol@campus.edu', role: 'STAFF', department: 'IT Services' } })
   const admin = await db.user.create({ data: { name: 'Admin Wang', email: 'admin@campus.edu', role: 'ADMIN', department: 'IT Services' } })
@@ -28,12 +28,13 @@ async function main() {
   await db.booking.createMany({ data: [
     { userId: bob.id, labId: labA.id, date: addDays(0), startTime: '10:00', endTime: '12:00', purpose: 'CS101 lecture session', status: 'CONFIRMED' },
     { userId: carol.id, labId: labB.id, date: addDays(1), startTime: '14:00', endTime: '16:00', purpose: 'ML workshop', status: 'CONFIRMED' },
-    { userId: bob.id, labId: labC.id, date: addDays(2), startTime: '15:00', endTime: '17:00', purpose: '3D printing project work', status: 'CONFIRMED' },
-    { userId: bob.id, labId: labA.id, date: addDays(-3), startTime: '09:00', endTime: '11:00', purpose: 'Assignment work', status: 'CANCELLED' },
+    { userId: alice.id, labId: labC.id, date: addDays(2), startTime: '15:00', endTime: '17:00', purpose: '3D printing project work', status: 'CONFIRMED' },
+    { userId: alice.id, labId: labA.id, date: addDays(-3), startTime: '09:00', endTime: '11:00', purpose: 'Assignment work', status: 'CANCELLED' },
   ] })
 
   console.log('Seed complete.')
-  console.log('Demo users (no students):')
+  console.log('Demo users:')
+  console.log('  Student: alice@campus.edu')
   console.log('  Faculty: bob@campus.edu')
   console.log('  Staff:   carol@campus.edu')
   console.log('  Admin:   admin@campus.edu')

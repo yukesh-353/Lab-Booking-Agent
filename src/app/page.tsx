@@ -22,7 +22,7 @@ interface User {
   id: string
   name: string
   email: string
-  role: 'FACULTY' | 'STAFF' | 'ADMIN'
+  role: 'STUDENT' | 'FACULTY' | 'STAFF' | 'ADMIN'
   department?: string | null
 }
 interface Lab {
@@ -89,12 +89,13 @@ function LoginScreen({ onLogin }: { onLogin: (u: User) => void }) {
   const [mode, setMode] = useState<'demo' | 'custom'>('demo')
   const [name, setName] = useState('')
   const [email, setEmail] = useState('')
-  const [role, setRole] = useState<'FACULTY' | 'STAFF' | 'ADMIN'>('FACULTY')
+  const [role, setRole] = useState<'STUDENT' | 'FACULTY' | 'STAFF' | 'ADMIN'>('STUDENT')
   const [department, setDepartment] = useState('')
   const [loading, setLoading] = useState(false)
   const { toast } = useToast()
 
   const demoUsers = [
+    { email: 'alice@campus.edu', label: 'Alice Chen · Student · Computer Science' },
     { email: 'bob@campus.edu', label: 'Bob Patel · Faculty · Computer Science' },
     { email: 'carol@campus.edu', label: 'Carol Reyes · Staff · IT Services' },
     { email: 'admin@campus.edu', label: 'Admin Wang · Admin · IT Services' },
@@ -154,7 +155,7 @@ function LoginScreen({ onLogin }: { onLogin: (u: User) => void }) {
                 <div className="space-y-1.5"><Label htmlFor="email">Email</Label><Input id="email" type="email" value={email} onChange={(e) => setEmail(e.target.value)} placeholder="jane@campus.edu" /></div>
                 <div className="space-y-1.5">
                   <Label htmlFor="role">Role</Label>
-                  <Select value={role} onValueChange={(v) => setRole(v as any)}><SelectTrigger><SelectValue /></SelectTrigger><SelectContent><SelectItem value="FACULTY">Faculty</SelectItem><SelectItem value="STAFF">Staff</SelectItem><SelectItem value="ADMIN">Admin</SelectItem></SelectContent></Select>
+                  <Select value={role} onValueChange={(v) => setRole(v as any)}><SelectTrigger><SelectValue /></SelectTrigger><SelectContent><SelectItem value="STUDENT">Student</SelectItem><SelectItem value="FACULTY">Faculty</SelectItem><SelectItem value="STAFF">Staff</SelectItem><SelectItem value="ADMIN">Admin</SelectItem></SelectContent></Select>
                 </div>
                 <div className="space-y-1.5"><Label htmlFor="dept">Department (optional)</Label><Input id="dept" value={department} onChange={(e) => setDepartment(e.target.value)} placeholder="Computer Science" /></div>
                 <Button className="w-full" disabled={loading} onClick={loginCustom}>{loading ? <Loader2 className="w-4 h-4 mr-2 animate-spin" /> : null}Sign in</Button>
@@ -327,6 +328,163 @@ function CalendarPanel({ user: _user }: { user: User }) {
               ))}
             </div>
           </div>
+        </CardContent>
+      </Card>
+    </div>
+  )
+}
+
+// ---------- Book Panel (manual booking form with time pickers) ----------
+function BookPanel({ user }: { user: User }) {
+  const [labs, setLabs] = useState<Lab[]>([])
+  const [selectedLabId, setSelectedLabId] = useState('')
+  const [selectedDate, setSelectedDate] = useState(new Date().toLocaleDateString('sv-SE'))
+  const [startTime, setStartTime] = useState('')
+  const [endTime, setEndTime] = useState('')
+  const [purpose, setPurpose] = useState('')
+  const [submitting, setSubmitting] = useState(false)
+  const [slots, setSlots] = useState<Slot[]>([])
+  const { toast } = useToast()
+  const todayStr = new Date().toLocaleDateString('sv-SE')
+
+  useEffect(() => {
+    fetch('/api/labs')
+      .then((r) => r.json())
+      .then((d) => {
+        const openLabs = (d.labs || []).filter((l: Lab) => l.status === 'OPEN')
+        setLabs(openLabs)
+        if (openLabs.length) setSelectedLabId(openLabs[0].id)
+      })
+      .catch(() => {})
+  }, [])
+
+  const selectedLab = labs.find((l) => l.id === selectedLabId)
+
+  // Generate time options in 30-min increments within the lab's open hours
+  const timeOptions: string[] = (() => {
+    if (!selectedLab) return []
+    const [oh, om] = selectedLab.openTime.split(':').map(Number)
+    const [ch, cm] = selectedLab.closeTime.split(':').map(Number)
+    const openM = oh * 60 + om
+    const closeM = ch * 60 + cm
+    const opts: string[] = []
+    for (let m = openM; m <= closeM; m += 30) {
+      opts.push(`${String(Math.floor(m / 60)).padStart(2, '0')}:${String(m % 60).padStart(2, '0')}`)
+    }
+    return opts
+  })()
+
+  const endTimeOptions = startTime ? timeOptions.filter((t) => t > startTime) : timeOptions
+
+  // Load availability preview for the selected lab + date
+  useEffect(() => {
+    if (!selectedLabId || !selectedDate) return
+    fetch(`/api/labs/${selectedLabId}/availability?date=${selectedDate}`)
+      .then((r) => r.json())
+      .then((d) => { if (d.slots) setSlots(d.slots) })
+      .catch(() => {})
+  }, [selectedLabId, selectedDate])
+
+  const submit = async () => {
+    if (!selectedLabId || !selectedDate || !startTime || !endTime) {
+      toast({ title: 'Please fill in all fields', variant: 'destructive' })
+      return
+    }
+    setSubmitting(true)
+    try {
+      const res = await fetch('/api/bookings', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ userId: user.id, labId: selectedLabId, date: selectedDate, startTime, endTime, purpose: purpose.trim() || undefined }),
+      })
+      const data = await res.json()
+      if (!res.ok) throw new Error(data.error || 'Booking failed')
+      toast({ title: 'Booking confirmed', description: `${selectedLab?.name} · ${format(new Date(selectedDate + 'T00:00:00'), 'EEE, MMM d')} · ${startTime}–${endTime}` })
+      setStartTime(''); setEndTime(''); setPurpose('')
+      // Refresh preview
+      fetch(`/api/labs/${selectedLabId}/availability?date=${selectedDate}`).then((r) => r.json()).then((d) => { if (d.slots) setSlots(d.slots) })
+    } catch (e: any) {
+      toast({ title: 'Booking failed', description: e.message, variant: 'destructive' })
+    } finally { setSubmitting(false) }
+  }
+
+  return (
+    <div className="space-y-4 p-4 max-w-3xl mx-auto">
+      <Card>
+        <CardHeader>
+          <CardTitle className="flex items-center gap-2"><CalendarDays className="w-5 h-5 text-emerald-600" /> Book a lab</CardTitle>
+          <CardDescription>Pick a lab, date, and time slot. Conflicts are checked automatically.</CardDescription>
+        </CardHeader>
+        <CardContent className="space-y-4">
+          {/* Lab select */}
+          <div className="space-y-1.5">
+            <Label htmlFor="book-lab">Lab</Label>
+            <Select value={selectedLabId} onValueChange={setSelectedLabId}>
+              <SelectTrigger><SelectValue placeholder="Select a lab" /></SelectTrigger>
+              <SelectContent>{labs.map((l) => <SelectItem key={l.id} value={l.id}>{l.name}</SelectItem>)}</SelectContent>
+            </Select>
+          </div>
+
+          {selectedLab && (
+            <div className="rounded-lg border bg-muted/30 p-3 text-xs text-muted-foreground">
+              <div className="grid grid-cols-2 sm:grid-cols-4 gap-2">
+                <span className="flex items-center gap-1"><MapPin className="w-3 h-3" /> {selectedLab.location}</span>
+                <span className="flex items-center gap-1"><Users className="w-3 h-3" /> {selectedLab.capacity} seats</span>
+                <span className="flex items-center gap-1"><Clock className="w-3 h-3" /> {selectedLab.openTime}–{selectedLab.closeTime}</span>
+                <span className="flex items-center gap-1"><Monitor className="w-3 h-3" /> {selectedLab.software?.split(',')[0] || 'Standard'}</span>
+              </div>
+            </div>
+          )}
+
+          {/* Date */}
+          <div className="space-y-1.5">
+            <Label htmlFor="book-date">Date</Label>
+            <Input id="book-date" type="date" min={todayStr} value={selectedDate} onChange={(e) => setSelectedDate(e.target.value)} />
+          </div>
+
+          {/* Time pickers */}
+          <div className="grid grid-cols-2 gap-3">
+            <div className="space-y-1.5">
+              <Label htmlFor="book-start">Start time</Label>
+              <Select value={startTime} onValueChange={(v) => { setStartTime(v); setEndTime('') }}>
+                <SelectTrigger><SelectValue placeholder="— select —" /></SelectTrigger>
+                <SelectContent className="max-h-72">{timeOptions.map((t) => <SelectItem key={t} value={t}>{t}</SelectItem>)}</SelectContent>
+              </Select>
+            </div>
+            <div className="space-y-1.5">
+              <Label htmlFor="book-end">End time</Label>
+              <Select value={endTime} onValueChange={setEndTime} disabled={!startTime}>
+                <SelectTrigger><SelectValue placeholder={startTime ? '— select —' : 'Pick start first'} /></SelectTrigger>
+                <SelectContent className="max-h-72">{endTimeOptions.map((t) => <SelectItem key={t} value={t}>{t}</SelectItem>)}</SelectContent>
+              </Select>
+            </div>
+          </div>
+
+          {/* Purpose */}
+          <div className="space-y-1.5">
+            <Label htmlFor="book-purpose">Purpose (optional)</Label>
+            <Input id="book-purpose" value={purpose} onChange={(e) => setPurpose(e.target.value)} maxLength={500} placeholder="e.g. ML project work" />
+            <p className="text-[10px] text-muted-foreground">{purpose.length}/500 characters</p>
+          </div>
+
+          {/* Availability preview */}
+          {selectedLab && (
+            <div className="rounded-md border p-3 space-y-2">
+              <div className="flex items-center justify-between text-sm">
+                <span className="font-medium">Availability on {format(new Date(selectedDate + 'T00:00:00'), 'EEE, MMM d')}</span>
+              </div>
+              <div className="flex flex-wrap gap-1.5">
+                {slots.length === 0 && <span className="text-xs text-muted-foreground">No data.</span>}
+                {slots.map((s, i) => (
+                  <Badge key={i} variant={s.booked ? 'destructive' : 'default'} className={`text-[10px] font-mono ${s.booked ? '' : 'bg-emerald-600 hover:bg-emerald-700'}`}>{s.start}–{s.end}</Badge>
+                ))}
+              </div>
+            </div>
+          )}
+
+          <Button onClick={submit} disabled={submitting || !selectedLabId || !startTime || !endTime} className="w-full bg-emerald-600 hover:bg-emerald-700 text-white">
+            {submitting ? <Loader2 className="w-4 h-4 mr-2 animate-spin" /> : <CheckCircle2 className="w-4 h-4 mr-2" />}Confirm booking
+          </Button>
         </CardContent>
       </Card>
     </div>
@@ -518,10 +676,11 @@ export default function Home() {
   const logout = () => { saveUser(null); setUser(null) }
 
   const roleBadge = {
+    STUDENT: 'bg-blue-100 text-blue-700 dark:bg-blue-950 dark:text-blue-300',
     FACULTY: 'bg-purple-100 text-purple-700 dark:bg-purple-950 dark:text-purple-300',
     STAFF: 'bg-amber-100 text-amber-700 dark:bg-amber-950 dark:text-amber-300',
     ADMIN: 'bg-emerald-100 text-emerald-700 dark:bg-emerald-950 dark:text-emerald-300',
-  }[user.role] || 'bg-slate-100 text-slate-700'
+  }[user.role]
 
   const canSeeAdmin = user.role === 'ADMIN' || user.role === 'STAFF'
 
@@ -548,12 +707,14 @@ export default function Home() {
         <div className="max-w-6xl mx-auto px-4">
           <Tabs value={tab} onValueChange={setTab}>
             <TabsList className="bg-transparent h-12 p-0 gap-4">
-              <TabsTrigger value="chat" className="bg-transparent shadow-none data-[state=active]:bg-transparent data-[state=active]:shadow-none rounded-none border-b-2 border-transparent data-[state=active]:border-emerald-600 data-[state=active]:text-emerald-700 dark:data-[state=active]:text-emerald-400 flex items-center gap-1.5"><Bot className="w-4 h-4" /> Chat Assistant</TabsTrigger>
-              <TabsTrigger value="calendar" className="bg-transparent shadow-none data-[state=active]:bg-transparent data-[state=active]:shadow-none rounded-none border-b-2 border-transparent data-[state=active]:border-emerald-600 data-[state=active]:text-emerald-700 dark:data-[state=active]:text-emerald-400 flex items-center gap-1.5"><CalendarDays className="w-4 h-4" /> Calendar</TabsTrigger>
+              <TabsTrigger value="chat" className="bg-transparent shadow-none data-[state=active]:bg-transparent data-[state=active]:shadow-none rounded-none border-b-2 border-transparent data-[state=active]:border-emerald-600 data-[state=active]:text-emerald-700 dark:data-[state=active]:text-emerald-400 flex items-center gap-1.5"><Bot className="w-4 h-4" /> Chat</TabsTrigger>
+              <TabsTrigger value="book" className="bg-transparent shadow-none data-[state=active]:bg-transparent data-[state=active]:shadow-none rounded-none border-b-2 border-transparent data-[state=active]:border-emerald-600 data-[state=active]:text-emerald-700 dark:data-[state=active]:text-emerald-400 flex items-center gap-1.5"><CalendarDays className="w-4 h-4" /> Book</TabsTrigger>
+              <TabsTrigger value="calendar" className="bg-transparent shadow-none data-[state=active]:bg-transparent data-[state=active]:shadow-none rounded-none border-b-2 border-transparent data-[state=active]:border-emerald-600 data-[state=active]:text-emerald-700 dark:data-[state=active]:text-emerald-400 flex items-center gap-1.5"><CalendarIcon className="w-4 h-4" /> Availability</TabsTrigger>
               <TabsTrigger value="bookings" className="bg-transparent shadow-none data-[state=active]:bg-transparent data-[state=active]:shadow-none rounded-none border-b-2 border-transparent data-[state=active]:border-emerald-600 data-[state=active]:text-emerald-700 dark:data-[state=active]:text-emerald-400 flex items-center gap-1.5"><LayoutDashboard className="w-4 h-4" /> My Bookings</TabsTrigger>
               {canSeeAdmin && <TabsTrigger value="admin" className="bg-transparent shadow-none data-[state=active]:bg-transparent data-[state=active]:shadow-none rounded-none border-b-2 border-transparent data-[state=active]:border-emerald-600 data-[state=active]:text-emerald-700 dark:data-[state=active]:text-emerald-400 flex items-center gap-1.5"><Shield className="w-4 h-4" /> Admin</TabsTrigger>}
             </TabsList>
             <TabsContent value="chat" className="mt-0 h-[calc(100vh-3.5rem-3rem)]"><ChatPanel user={user} /></TabsContent>
+            <TabsContent value="book" className="mt-0"><BookPanel user={user} /></TabsContent>
             <TabsContent value="calendar" className="mt-0"><CalendarPanel user={user} /></TabsContent>
             <TabsContent value="bookings" className="mt-0"><MyBookingsPanel user={user} /></TabsContent>
             {canSeeAdmin && <TabsContent value="admin" className="mt-0"><AdminPanel user={user} /></TabsContent>}
