@@ -147,8 +147,45 @@ export const validateBooking = async (params: {
 }
 
 // Role-based permissions
+// Faculty, staff, and admins can all manage labs (add/edit/delete).
 export const canApproveBookings = (role: string) => role === 'ADMIN' || role === 'STAFF'
-export const canManageLabs = (role: string) => role === 'ADMIN'
+export const canManageLabs = (role: string) => role === 'ADMIN' || role === 'STAFF' || role === 'FACULTY'
 
-// Field length limit for the purpose field (defense against abuse)
+// Field length limits
 export const MAX_PURPOSE_LENGTH = 500
+export const MAX_LAB_NAME_LENGTH = 100
+export const MAX_LAB_LOCATION_LENGTH = 200
+export const MAX_LAB_DESCRIPTION_LENGTH = 1000
+export const MAX_SOFTWARE_LENGTH = 500
+
+// Validate a lab create/update payload
+export const validateLab = (params: {
+  name?: string
+  location?: string
+  capacity?: number
+  openTime?: string
+  closeTime?: string
+  status?: string
+  description?: string | null
+  software?: string | null
+}): { ok: boolean; error?: string } => {
+  const { name, location, capacity, openTime, closeTime, status, description, software } = params
+  if (name !== undefined) {
+    if (!name.trim()) return { ok: false, error: 'Lab name is required.' }
+    if (name.length > MAX_LAB_NAME_LENGTH) return { ok: false, error: `Lab name must be ≤ ${MAX_LAB_NAME_LENGTH} chars.` }
+  }
+  if (location !== undefined) {
+    if (!location.trim()) return { ok: false, error: 'Location is required.' }
+    if (location.length > MAX_LAB_LOCATION_LENGTH) return { ok: false, error: `Location must be ≤ ${MAX_LAB_LOCATION_LENGTH} chars.` }
+  }
+  if (capacity !== undefined) {
+    if (!Number.isInteger(capacity) || capacity < 1 || capacity > 1000) return { ok: false, error: 'Capacity must be a whole number between 1 and 1000.' }
+  }
+  if (openTime !== undefined && !isValidTime(openTime)) return { ok: false, error: 'Open time must be HH:mm.' }
+  if (closeTime !== undefined && !isValidTime(closeTime)) return { ok: false, error: 'Close time must be HH:mm.' }
+  if (openTime !== undefined && closeTime !== undefined && timeToMinutes(openTime) >= timeToMinutes(closeTime)) return { ok: false, error: 'Open time must be earlier than close time.' }
+  if (status !== undefined && !['OPEN', 'CLOSED', 'MAINTENANCE'].includes(status)) return { ok: false, error: 'Status must be OPEN, CLOSED, or MAINTENANCE.' }
+  if (description !== undefined && description !== null && description.length > MAX_LAB_DESCRIPTION_LENGTH) return { ok: false, error: `Description must be ≤ ${MAX_LAB_DESCRIPTION_LENGTH} chars.` }
+  if (software !== undefined && software !== null && software.length > MAX_SOFTWARE_LENGTH) return { ok: false, error: `Software list must be ≤ ${MAX_SOFTWARE_LENGTH} chars.` }
+  return { ok: true }
+}

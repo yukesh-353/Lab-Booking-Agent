@@ -6,12 +6,15 @@ import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/com
 import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs'
+import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from '@/components/ui/dialog'
+import { Textarea } from '@/components/ui/textarea'
 import { Badge } from '@/components/ui/badge'
 import { ScrollArea } from '@/components/ui/scroll-area'
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select'
 import {
   Bot, Send, Calendar as CalendarIcon, LayoutDashboard, Shield, LogOut, Loader2, User,
   Clock, MapPin, Users, Monitor, CheckCircle2, XCircle, CalendarDays, Sparkles, History,
+  Plus, Pencil, FlaskConical, Trash2,
 } from 'lucide-react'
 import { useToast } from '@/hooks/use-toast'
 import { format } from 'date-fns'
@@ -491,6 +494,169 @@ function BookPanel({ user }: { user: User }) {
   )
 }
 
+// ---------- Labs Management Panel (faculty/staff/admin) ----------
+function LabsPanel({ user }: { user: User }) {
+  const [labs, setLabs] = useState<Lab[]>([])
+  const [loading, setLoading] = useState(true)
+  const [editing, setEditing] = useState<Lab | null>(null)
+  const [creating, setCreating] = useState(false)
+  const { toast } = useToast()
+
+  const load = useCallback(async () => {
+    setLoading(true)
+    try {
+      const res = await fetch('/api/labs')
+      const data = await res.json()
+      if (!res.ok) throw new Error(data.error)
+      setLabs(data.labs || [])
+    } catch (e: any) { toast({ title: 'Failed to load labs', description: e.message, variant: 'destructive' }) }
+    finally { setLoading(false) }
+  }, [toast])
+
+  useEffect(() => { load() }, [load])
+
+  const setLabStatus = async (lab: Lab, status: 'OPEN' | 'CLOSED' | 'MAINTENANCE') => {
+    try {
+      const res = await fetch(`/api/labs/${lab.id}`, { method: 'PATCH', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ userId: user.id, status }) })
+      const data = await res.json()
+      if (!res.ok) throw new Error(data.error)
+      toast({ title: 'Status updated', description: `${lab.name} is now ${status.toLowerCase()}.` })
+      load()
+    } catch (e: any) { toast({ title: 'Failed to update', description: e.message, variant: 'destructive' }) }
+  }
+
+  const deleteLab = async (lab: Lab) => {
+    if (!confirm(`Delete ${lab.name}? This cannot be undone.`)) return
+    try {
+      const res = await fetch(`/api/labs/${lab.id}?userId=${user.id}`, { method: 'DELETE' })
+      const data = await res.json()
+      if (!res.ok) throw new Error(data.error)
+      toast({ title: 'Lab deleted', description: `${lab.name} has been removed.` })
+      load()
+    } catch (e: any) { toast({ title: 'Failed to delete', description: e.message, variant: 'destructive' }) }
+  }
+
+  if (user.role === 'STUDENT') {
+    return (<div className="p-4 max-w-5xl mx-auto"><Card><CardContent className="py-12 text-center"><Shield className="w-10 h-10 mx-auto mb-3 text-muted-foreground/50" /><p className="text-muted-foreground">Faculty, staff, or admin access required.</p><p className="text-sm text-muted-foreground mt-1">Only faculty, staff, and admins can manage labs.</p></CardContent></Card></div>)
+  }
+
+  const statusBadge = (s: string) => {
+    const cls: Record<string, string> = { OPEN: 'bg-emerald-600 hover:bg-emerald-700', CLOSED: 'bg-slate-500 hover:bg-slate-600', MAINTENANCE: 'bg-amber-500 hover:bg-amber-600' }
+    return <Badge variant="default" className={`text-xs ${cls[s] || ''}`}>{s.toLowerCase()}</Badge>
+  }
+
+  return (
+    <div className="space-y-4 p-4 max-w-5xl mx-auto">
+      <Card>
+        <CardHeader>
+          <div className="flex items-center justify-between">
+            <div>
+              <CardTitle className="flex items-center gap-2"><FlaskConical className="w-5 h-5 text-emerald-600" /> Manage labs</CardTitle>
+              <CardDescription>Create, edit, and control the status of campus computer labs.</CardDescription>
+            </div>
+            <Button onClick={() => setCreating(true)} className="bg-emerald-600 hover:bg-emerald-700 text-white"><Plus className="w-4 h-4 mr-1" /> Add lab</Button>
+          </div>
+        </CardHeader>
+        <CardContent>
+          {loading ? <div className="flex items-center justify-center py-8"><Loader2 className="w-6 h-6 animate-spin text-muted-foreground" /></div>
+           : labs.length === 0 ? <p className="text-sm text-muted-foreground text-center py-8">No labs yet. Click "Add lab" to create the first one.</p>
+           : (
+            <div className="space-y-2">
+              {labs.map((lab) => (
+                <div key={lab.id} className="flex items-center justify-between rounded-lg border p-3 gap-3">
+                  <div className="flex-1 min-w-0">
+                    <div className="flex items-center gap-2 flex-wrap">
+                      <span className="font-medium text-sm truncate">{lab.name}</span>
+                      {statusBadge(lab.status)}
+                    </div>
+                    <div className="text-xs text-muted-foreground mt-1 flex items-center gap-3 flex-wrap">
+                      <span className="flex items-center gap-1"><MapPin className="w-3 h-3" /> {lab.location}</span>
+                      <span className="flex items-center gap-1"><Users className="w-3 h-3" /> {lab.capacity}</span>
+                      <span className="flex items-center gap-1"><Clock className="w-3 h-3" /> {lab.openTime}–{lab.closeTime}</span>
+                    </div>
+                    {lab.software && <div className="text-[11px] text-muted-foreground mt-0.5 truncate">Software: {lab.software}</div>}
+                  </div>
+                  <div className="flex items-center gap-1 shrink-0">
+                    <Select value={lab.status} onValueChange={(v) => setLabStatus(lab, v as any)}>
+                      <SelectTrigger className="h-8 w-32 text-xs"><SelectValue /></SelectTrigger>
+                      <SelectContent><SelectItem value="OPEN">Open</SelectItem><SelectItem value="CLOSED">Closed</SelectItem><SelectItem value="MAINTENANCE">Maintenance</SelectItem></SelectContent>
+                    </Select>
+                    <Button variant="ghost" size="icon" className="h-8 w-8" onClick={() => setEditing(lab)} title="Edit"><Pencil className="w-3.5 h-3.5" /></Button>
+                    <Button variant="ghost" size="icon" className="h-8 w-8 text-red-600 hover:text-red-700 hover:bg-red-50 dark:hover:bg-red-950/30" onClick={() => deleteLab(lab)} title="Delete"><Trash2 className="w-3.5 h-3.5" /></Button>
+                  </div>
+                </div>
+              ))}
+            </div>
+          )}
+        </CardContent>
+      </Card>
+      {(creating || editing) && <LabEditor lab={editing} userId={user.id} onClose={() => { setCreating(false); setEditing(null) }} onSaved={() => { setCreating(false); setEditing(null); load() }} />}
+    </div>
+  )
+}
+
+// ---------- Lab Editor (create/edit dialog) ----------
+function LabEditor({ lab, userId, onClose, onSaved }: { lab: Lab | null; userId: string; onClose: () => void; onSaved: () => void }) {
+  const isEdit = !!lab
+  const [name, setName] = useState(lab?.name || '')
+  const [location, setLocation] = useState(lab?.location || '')
+  const [capacity, setCapacity] = useState(lab?.capacity?.toString() || '30')
+  const [openTime, setOpenTime] = useState(lab?.openTime || '08:00')
+  const [closeTime, setCloseTime] = useState(lab?.closeTime || '22:00')
+  const [status, setStatus] = useState<'OPEN' | 'CLOSED' | 'MAINTENANCE'>(lab?.status || 'OPEN')
+  const [description, setDescription] = useState(lab?.description || '')
+  const [software, setSoftware] = useState(lab?.software || '')
+  const [saving, setSaving] = useState(false)
+  const { toast } = useToast()
+
+  const allTimeOptions: string[] = (() => { const opts: string[] = []; for (let m = 0; m < 24 * 60; m += 30) opts.push(`${String(Math.floor(m / 60)).padStart(2, '0')}:${String(m % 60).padStart(2, '0')}`); return opts })()
+
+  const save = async () => {
+    if (!name.trim() || !location.trim() || !capacity || !openTime || !closeTime) { toast({ title: 'Please fill in all required fields', variant: 'destructive' }); return }
+    setSaving(true)
+    try {
+      const payload: any = { userId, name: name.trim(), location: location.trim(), capacity: Number(capacity), openTime, closeTime, status, description: description.trim() || null, software: software.trim() || null }
+      const url = isEdit ? `/api/labs/${lab!.id}` : '/api/labs'
+      const method = isEdit ? 'PATCH' : 'POST'
+      const res = await fetch(url, { method, headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(payload) })
+      const data = await res.json()
+      if (!res.ok) throw new Error(data.error || 'Save failed')
+      toast({ title: isEdit ? 'Lab updated' : 'Lab created', description: `${name} has been ${isEdit ? 'updated' : 'added'}.` })
+      onSaved()
+    } catch (e: any) { toast({ title: 'Save failed', description: e.message, variant: 'destructive' }) }
+    finally { setSaving(false) }
+  }
+
+  return (
+    <Dialog open onOpenChange={(o) => { if (!o) onClose() }}>
+      <DialogContent className="max-w-lg max-h-[90vh] overflow-y-auto">
+        <DialogHeader>
+          <DialogTitle>{isEdit ? 'Edit lab' : 'Add new lab'}</DialogTitle>
+          <DialogDescription>{isEdit ? `Update details for ${lab!.name}.` : 'Create a new computer lab.'}</DialogDescription>
+        </DialogHeader>
+        <div className="space-y-3 py-2">
+          <div className="space-y-1.5"><Label htmlFor="lab-name">Name *</Label><Input id="lab-name" value={name} onChange={(e) => setName(e.target.value)} maxLength={100} placeholder="e.g. Lab E — Engineering 305" /></div>
+          <div className="space-y-1.5"><Label htmlFor="lab-location">Location *</Label><Input id="lab-location" value={location} onChange={(e) => setLocation(e.target.value)} maxLength={200} placeholder="Building, room" /></div>
+          <div className="grid grid-cols-2 gap-3">
+            <div className="space-y-1.5"><Label htmlFor="lab-capacity">Capacity *</Label><Input id="lab-capacity" type="number" min="1" max="1000" value={capacity} onChange={(e) => setCapacity(e.target.value)} /></div>
+            <div className="space-y-1.5"><Label htmlFor="lab-status">Status</Label><Select value={status} onValueChange={(v) => setStatus(v as any)}><SelectTrigger><SelectValue /></SelectTrigger><SelectContent><SelectItem value="OPEN">Open</SelectItem><SelectItem value="CLOSED">Closed</SelectItem><SelectItem value="MAINTENANCE">Maintenance</SelectItem></SelectContent></Select></div>
+          </div>
+          <div className="grid grid-cols-2 gap-3">
+            <div className="space-y-1.5"><Label htmlFor="lab-open">Open time *</Label><Select value={openTime} onValueChange={setOpenTime}><SelectTrigger><SelectValue /></SelectTrigger><SelectContent className="max-h-60">{allTimeOptions.map((t) => <SelectItem key={t} value={t}>{t}</SelectItem>)}</SelectContent></Select></div>
+            <div className="space-y-1.5"><Label htmlFor="lab-close">Close time *</Label><Select value={closeTime} onValueChange={setCloseTime}><SelectTrigger><SelectValue /></SelectTrigger><SelectContent className="max-h-60">{allTimeOptions.map((t) => <SelectItem key={t} value={t}>{t}</SelectItem>)}</SelectContent></Select></div>
+          </div>
+          <div className="space-y-1.5"><Label htmlFor="lab-desc">Description</Label><Textarea id="lab-desc" value={description} onChange={(e) => setDescription(e.target.value)} maxLength={1000} rows={2} placeholder="Short description of the lab" /></div>
+          <div className="space-y-1.5"><Label htmlFor="lab-software">Software (comma-separated)</Label><Input id="lab-software" value={software} onChange={(e) => setSoftware(e.target.value)} maxLength={500} placeholder="e.g. Python, MATLAB, Git" /></div>
+        </div>
+        <DialogFooter>
+          <Button variant="outline" onClick={onClose} disabled={saving}>Cancel</Button>
+          <Button onClick={save} disabled={saving} className="bg-emerald-600 hover:bg-emerald-700 text-white">{saving ? <Loader2 className="w-4 h-4 mr-2 animate-spin" /> : null}{isEdit ? 'Save changes' : 'Create lab'}</Button>
+        </DialogFooter>
+      </DialogContent>
+    </Dialog>
+  )
+}
+
 // ---------- My Bookings Panel ----------
 function MyBookingsPanel({ user }: { user: User }) {
   const [bookings, setBookings] = useState<Booking[]>([])
@@ -714,6 +880,7 @@ export default function Home() {
   }[user.role]
 
   const canSeeAdmin = user.role === 'ADMIN' || user.role === 'STAFF'
+  const canManageLabs = user.role === 'ADMIN' || user.role === 'STAFF' || user.role === 'FACULTY'
 
   return (
     <div className="min-h-screen flex flex-col bg-background">
@@ -742,12 +909,14 @@ export default function Home() {
               <TabsTrigger value="book" className="bg-transparent shadow-none data-[state=active]:bg-transparent data-[state=active]:shadow-none rounded-none border-b-2 border-transparent data-[state=active]:border-emerald-600 data-[state=active]:text-emerald-700 dark:data-[state=active]:text-emerald-400 flex items-center gap-1.5"><CalendarDays className="w-4 h-4" /> Book</TabsTrigger>
               <TabsTrigger value="calendar" className="bg-transparent shadow-none data-[state=active]:bg-transparent data-[state=active]:shadow-none rounded-none border-b-2 border-transparent data-[state=active]:border-emerald-600 data-[state=active]:text-emerald-700 dark:data-[state=active]:text-emerald-400 flex items-center gap-1.5"><CalendarIcon className="w-4 h-4" /> Availability</TabsTrigger>
               <TabsTrigger value="bookings" className="bg-transparent shadow-none data-[state=active]:bg-transparent data-[state=active]:shadow-none rounded-none border-b-2 border-transparent data-[state=active]:border-emerald-600 data-[state=active]:text-emerald-700 dark:data-[state=active]:text-emerald-400 flex items-center gap-1.5"><LayoutDashboard className="w-4 h-4" /> My Bookings</TabsTrigger>
+              {canManageLabs && <TabsTrigger value="labs" className="bg-transparent shadow-none data-[state=active]:bg-transparent data-[state=active]:shadow-none rounded-none border-b-2 border-transparent data-[state=active]:border-emerald-600 data-[state=active]:text-emerald-700 dark:data-[state=active]:text-emerald-400 flex items-center gap-1.5"><FlaskConical className="w-4 h-4" /> Labs</TabsTrigger>}
               {canSeeAdmin && <TabsTrigger value="admin" className="bg-transparent shadow-none data-[state=active]:bg-transparent data-[state=active]:shadow-none rounded-none border-b-2 border-transparent data-[state=active]:border-emerald-600 data-[state=active]:text-emerald-700 dark:data-[state=active]:text-emerald-400 flex items-center gap-1.5"><Shield className="w-4 h-4" /> Admin</TabsTrigger>}
             </TabsList>
             <TabsContent value="chat" className="mt-0 h-[calc(100vh-3.5rem-3rem)]"><ChatPanel user={user} /></TabsContent>
             <TabsContent value="book" className="mt-0"><BookPanel user={user} /></TabsContent>
             <TabsContent value="calendar" className="mt-0"><CalendarPanel user={user} /></TabsContent>
             <TabsContent value="bookings" className="mt-0"><MyBookingsPanel user={user} /></TabsContent>
+            {canManageLabs && <TabsContent value="labs" className="mt-0"><LabsPanel user={user} /></TabsContent>}
             {canSeeAdmin && <TabsContent value="admin" className="mt-0"><AdminPanel user={user} /></TabsContent>}
           </Tabs>
         </div>
