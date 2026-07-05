@@ -19,10 +19,13 @@ export async function POST(req: NextRequest) {
   if (!email || !name || !role) {
     return NextResponse.json({ error: 'email, name, role are required' }, { status: 400 })
   }
+  // Reject STUDENT role — the software is for faculty, staff, and admins only.
+  const allowedRoles = ['FACULTY', 'STAFF', 'ADMIN']
+  const finalRole = allowedRoles.includes(role) ? role : 'FACULTY'
   const user = await db.user.upsert({
     where: { email },
-    update: { name, role, department },
-    create: { email, name, role, department },
+    update: { name, role: finalRole, department },
+    create: { email, name, role: finalRole, department },
   })
   return NextResponse.json({ user })
 }

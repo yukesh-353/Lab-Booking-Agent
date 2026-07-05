@@ -22,7 +22,7 @@ interface User {
   id: string
   name: string
   email: string
-  role: 'STUDENT' | 'FACULTY' | 'STAFF' | 'ADMIN'
+  role: 'FACULTY' | 'STAFF' | 'ADMIN'
   department?: string | null
 }
 interface Lab {
@@ -89,13 +89,12 @@ function LoginScreen({ onLogin }: { onLogin: (u: User) => void }) {
   const [mode, setMode] = useState<'demo' | 'custom'>('demo')
   const [name, setName] = useState('')
   const [email, setEmail] = useState('')
-  const [role, setRole] = useState<'STUDENT' | 'FACULTY' | 'STAFF' | 'ADMIN'>('STUDENT')
+  const [role, setRole] = useState<'FACULTY' | 'STAFF' | 'ADMIN'>('FACULTY')
   const [department, setDepartment] = useState('')
   const [loading, setLoading] = useState(false)
   const { toast } = useToast()
 
   const demoUsers = [
-    { email: 'alice@campus.edu', label: 'Alice Chen · Student · Computer Science' },
     { email: 'bob@campus.edu', label: 'Bob Patel · Faculty · Computer Science' },
     { email: 'carol@campus.edu', label: 'Carol Reyes · Staff · IT Services' },
     { email: 'admin@campus.edu', label: 'Admin Wang · Admin · IT Services' },
@@ -155,7 +154,7 @@ function LoginScreen({ onLogin }: { onLogin: (u: User) => void }) {
                 <div className="space-y-1.5"><Label htmlFor="email">Email</Label><Input id="email" type="email" value={email} onChange={(e) => setEmail(e.target.value)} placeholder="jane@campus.edu" /></div>
                 <div className="space-y-1.5">
                   <Label htmlFor="role">Role</Label>
-                  <Select value={role} onValueChange={(v) => setRole(v as any)}><SelectTrigger><SelectValue /></SelectTrigger><SelectContent><SelectItem value="STUDENT">Student</SelectItem><SelectItem value="FACULTY">Faculty</SelectItem><SelectItem value="STAFF">Staff</SelectItem><SelectItem value="ADMIN">Admin</SelectItem></SelectContent></Select>
+                  <Select value={role} onValueChange={(v) => setRole(v as any)}><SelectTrigger><SelectValue /></SelectTrigger><SelectContent><SelectItem value="FACULTY">Faculty</SelectItem><SelectItem value="STAFF">Staff</SelectItem><SelectItem value="ADMIN">Admin</SelectItem></SelectContent></Select>
                 </div>
                 <div className="space-y-1.5"><Label htmlFor="dept">Department (optional)</Label><Input id="dept" value={department} onChange={(e) => setDepartment(e.target.value)} placeholder="Computer Science" /></div>
                 <Button className="w-full" disabled={loading} onClick={loginCustom}>{loading ? <Loader2 className="w-4 h-4 mr-2 animate-spin" /> : null}Sign in</Button>
@@ -519,11 +518,10 @@ export default function Home() {
   const logout = () => { saveUser(null); setUser(null) }
 
   const roleBadge = {
-    STUDENT: 'bg-blue-100 text-blue-700 dark:bg-blue-950 dark:text-blue-300',
     FACULTY: 'bg-purple-100 text-purple-700 dark:bg-purple-950 dark:text-purple-300',
     STAFF: 'bg-amber-100 text-amber-700 dark:bg-amber-950 dark:text-amber-300',
     ADMIN: 'bg-emerald-100 text-emerald-700 dark:bg-emerald-950 dark:text-emerald-300',
-  }[user.role]
+  }[user.role] || 'bg-slate-100 text-slate-700'
 
   const canSeeAdmin = user.role === 'ADMIN' || user.role === 'STAFF'
 
