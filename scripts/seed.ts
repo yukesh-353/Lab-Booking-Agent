@@ -1,5 +1,6 @@
-// Seed script — populate labs, demo users, and a few bookings
+// Seed script — populate labs, demo users (with hashed passwords), and a few bookings
 import { db } from '../src/lib/db'
+import { hashPassword } from '../src/lib/auth'
 
 const today = new Date()
 const isoDate = (d: Date) => d.toLocaleDateString('sv-SE')
@@ -15,15 +16,16 @@ async function main() {
   await db.user.deleteMany({})
   await db.lab.deleteMany({})
 
-  const alice = await db.user.create({ data: { name: 'Alice Chen', email: 'alice@campus.edu', role: 'STUDENT', department: 'Computer Science' } })
-  const bob = await db.user.create({ data: { name: 'Bob Patel', email: 'bob@campus.edu', role: 'FACULTY', department: 'Computer Science' } })
-  const carol = await db.user.create({ data: { name: 'Carol Reyes', email: 'carol@campus.edu', role: 'STAFF', department: 'IT Services' } })
-  const admin = await db.user.create({ data: { name: 'Admin Wang', email: 'admin@campus.edu', role: 'ADMIN', department: 'IT Services' } })
+  const demoHash = await hashPassword('demo1234')
+  const alice = await db.user.create({ data: { name: 'Alice Chen', email: 'alice@campus.edu', role: 'STUDENT', department: 'Computer Science', passwordHash: demoHash } })
+  const bob = await db.user.create({ data: { name: 'Bob Patel', email: 'bob@campus.edu', role: 'FACULTY', department: 'Computer Science', passwordHash: demoHash } })
+  const carol = await db.user.create({ data: { name: 'Carol Reyes', email: 'carol@campus.edu', role: 'STAFF', department: 'IT Services', passwordHash: demoHash } })
+  const admin = await db.user.create({ data: { name: 'Admin Wang', email: 'admin@campus.edu', role: 'ADMIN', department: 'IT Services', passwordHash: demoHash } })
 
-  const labA = await db.lab.create({ data: { name: 'Lab A — Engineering 101', location: 'Engineering Building, Room 101', capacity: 30, description: 'General-purpose Windows computer lab with dual monitors. Ideal for programming coursework.', openTime: '08:00', closeTime: '22:00', status: 'OPEN', software: 'Visual Studio, Python, MATLAB, Git, Office Suite' } })
-  const labB = await db.lab.create({ data: { name: 'Lab B — Science 204', location: 'Science Building, Room 204', capacity: 24, description: 'Linux workstation lab optimized for data science and machine learning projects.', openTime: '09:00', closeTime: '21:00', status: 'OPEN', software: 'Ubuntu 22.04, PyTorch, TensorFlow, R Studio, Jupyter' } })
-  const labC = await db.lab.create({ data: { name: 'Lab C — Library Lower Level', location: 'Main Library, Lower Level', capacity: 40, description: 'Quiet study lab with high-performance workstations and 3D printer access.', openTime: '07:00', closeTime: '23:00', status: 'OPEN', software: 'Adobe Creative Cloud, Blender, Fusion 360, Cura' } })
-  const labD = await db.lab.create({ data: { name: 'Lab D — Innovation Hub', location: 'Innovation Center, Room 110', capacity: 18, description: 'Collaborative lab with whiteboards, projectors, and breakout screens.', openTime: '10:00', closeTime: '20:00', status: 'MAINTENANCE', software: 'MS Teams, Zoom, Miro, Figma' } })
+  const labA = await db.lab.create({ data: { name: 'Lab A — Engineering 101', location: 'Engineering Building, Room 101', capacity: 30, description: 'General-purpose Windows computer lab with dual monitors.', openTime: '08:00', closeTime: '22:00', status: 'OPEN', software: 'Visual Studio, Python, MATLAB, Git, Office Suite' } })
+  const labB = await db.lab.create({ data: { name: 'Lab B — Science 204', location: 'Science Building, Room 204', capacity: 24, description: 'Linux workstation lab for data science and ML.', openTime: '09:00', closeTime: '21:00', status: 'OPEN', software: 'Ubuntu 22.04, PyTorch, TensorFlow, R Studio, Jupyter' } })
+  const labC = await db.lab.create({ data: { name: 'Lab C — Library Lower Level', location: 'Main Library, Lower Level', capacity: 40, description: 'Quiet study lab with 3D printer access.', openTime: '07:00', closeTime: '23:00', status: 'OPEN', software: 'Adobe Creative Cloud, Blender, Fusion 360, Cura' } })
+  const labD = await db.lab.create({ data: { name: 'Lab D — Innovation Hub', location: 'Innovation Center, Room 110', capacity: 18, description: 'Collaborative lab with whiteboards and projectors.', openTime: '10:00', closeTime: '20:00', status: 'MAINTENANCE', software: 'MS Teams, Zoom, Miro, Figma' } })
 
   await db.booking.createMany({ data: [
     { userId: bob.id, labId: labA.id, date: addDays(0), startTime: '10:00', endTime: '12:00', purpose: 'CS101 lecture session', status: 'CONFIRMED' },
@@ -32,13 +34,11 @@ async function main() {
     { userId: alice.id, labId: labA.id, date: addDays(-3), startTime: '09:00', endTime: '11:00', purpose: 'Assignment work', status: 'CANCELLED' },
   ] })
 
-  console.log('Seed complete.')
-  console.log('Demo users:')
-  console.log('  Student: alice@campus.edu')
-  console.log('  Faculty: bob@campus.edu')
-  console.log('  Staff:   carol@campus.edu')
-  console.log('  Admin:   admin@campus.edu')
-  console.log('Labs created: 4')
+  console.log('Seed complete. Demo password for all users: demo1234')
+  console.log('  alice@campus.edu (Student)')
+  console.log('  bob@campus.edu (Faculty)')
+  console.log('  carol@campus.edu (Staff)')
+  console.log('  admin@campus.edu (Admin)')
 }
 
 main().catch((e) => { console.error(e); process.exit(1) }).finally(async () => { await db.$disconnect() })
