@@ -565,7 +565,7 @@ function LabsPanel({ user }: { user: User }) {
   const deleteLab = async (lab: Lab) => {
     if (!confirm(`Delete ${lab.name}? This cannot be undone.`)) return
     try {
-      const res = await fetch(`/api/labs/${lab.id}`, { method: 'DELETE' })
+      const res = await fetch(`/api/labs/${lab.id}?userId=${user.id}`, { method: 'DELETE' })
       const data = await res.json()
       if (!res.ok) throw new Error(data.error)
       toast({ title: 'Lab deleted', description: `${lab.name} has been removed.` })
@@ -703,7 +703,7 @@ function MyBookingsPanel({ user }: { user: User }) {
   const load = useCallback(async () => {
     setLoading(true)
     try {
-      const res = await fetch(`/api/bookings?userId=${user.id}/api/bookings?scope=minescope=mine`)
+      const res = await fetch(`/api/bookings?userId=${user.id}&scope=mine`)
       const data = await res.json()
       if (!res.ok) throw new Error(data.error)
       setBookings(data.bookings || [])
@@ -715,7 +715,7 @@ function MyBookingsPanel({ user }: { user: User }) {
 
   const cancel = async (id: string) => {
     try {
-      const res = await fetch(`/api/bookings/${id}`, { method: 'DELETE' })
+      const res = await fetch(`/api/bookings/${id}?userId=${user.id}`, { method: 'DELETE' })
       const data = await res.json()
       if (!res.ok) throw new Error(data.error)
       toast({ title: 'Booking cancelled', description: 'The slot is now free for others.' })
@@ -784,13 +784,13 @@ function AdminPanel({ user }: { user: User }) {
 
   const loadStats = useCallback(async () => {
     setLoading(true)
-    try { const res = await fetch(`/api/admin/stats`); const data = await res.json(); if (!res.ok) throw new Error(data.error); setStats(data) }
+    try { const res = await fetch(`/api/admin/stats?userId=${user.id}`); const data = await res.json(); if (!res.ok) throw new Error(data.error); setStats(data) }
     catch (e: any) { toast({ title: 'Failed to load admin stats', description: e.message, variant: 'destructive' }) }
     finally { setLoading(false) }
   }, [user.id, toast])
 
   const loadAllBookings = useCallback(async () => {
-    try { const res = await fetch(`/api/bookings?userId=${user.id}/api/bookings?scope=allscope=all&date=${allBookingsDate}`); const data = await res.json(); if (!res.ok) throw new Error(data.error); setAllBookings(data.bookings || []) }
+    try { const res = await fetch(`/api/bookings?userId=${user.id}&scope=all&date=${allBookingsDate}`); const data = await res.json(); if (!res.ok) throw new Error(data.error); setAllBookings(data.bookings || []) }
     catch (e: any) { toast({ title: 'Failed to load bookings', description: e.message, variant: 'destructive' }) }
   }, [user.id, allBookingsDate, toast])
 
@@ -879,7 +879,7 @@ function UsersPanel({ user }: { user: User }) {
   const load = useCallback(async () => {
     setLoading(true)
     try {
-      const res = await fetch(`/api/admin/users`)
+      const res = await fetch(`/api/admin/users?userId=${user.id}`)
       const data = await res.json()
       if (!res.ok) throw new Error(data.error)
       setUsers(data.users || [])
@@ -892,7 +892,7 @@ function UsersPanel({ user }: { user: User }) {
   const deleteUser = async (u: any) => {
     if (!confirm(`Delete ${u.name}? This will also delete all their bookings. This cannot be undone.`)) return
     try {
-      const res = await fetch(`/api/admin/users/${u.id}`, { method: 'DELETE' })
+      const res = await fetch(`/api/admin/users/${u.id}?userId=${user.id}`, { method: 'DELETE' })
       const data = await res.json()
       if (!res.ok) throw new Error(data.error)
       toast({ title: 'User deleted', description: `${u.name} has been removed.` })
